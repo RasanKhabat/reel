@@ -1,0 +1,6 @@
+# Rust build output
+/target/
+# Packaged app and release zips
+/build/
+/dist/
+.DS_Store

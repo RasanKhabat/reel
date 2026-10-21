@@ -1,0 +1,22 @@
+name: Release
+# Push a tag like v0.2.0 to build Reel and publish it as a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14   # Apple silicon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: cargo test
+      - name: Build release zip
+        run: ./release.sh
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 --title "Reel $GITHUB_REF_NAME" --generate-notes
