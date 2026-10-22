@@ -12,8 +12,39 @@ and needs no changes to System Integrity Protection.
 
 **Requirements:** macOS 13 Ventura or later on an Apple silicon Mac.
 
+### With Terminal
+
+Paste this into Terminal. It downloads the latest release, puts Reel.app in Applications and
+opens it:
+
+```bash
+curl -fL -o /tmp/Reel.zip https://github.com/RasanKhabat/reel/releases/latest/download/Reel-macos-arm64.zip
+ditto -x -k /tmp/Reel.zip /Applications && rm /tmp/Reel.zip
+open /Applications/Reel.app
+```
+
+Then continue at step 4 below. (Downloads made with `curl` aren't marked as coming from the
+internet, so macOS doesn't ask you to approve the app first.)
+
+To update later, quit Reel from its panel and run the same three lines again. macOS treats
+each new version as a different app, so turn Reel off and on again under
+**Privacy & Security → Accessibility** if it asks for access.
+
+### With Homebrew
+
+```bash
+brew install --cask rasankhabat/reel/reel
+```
+
+Then open Reel from Applications and continue at step 3 below (Homebrew marks its downloads as
+coming from the internet, so macOS asks you to approve the app once). Update with
+`brew upgrade --cask reel`; remove with `brew uninstall --cask reel` (add `--zap` to also
+remove settings and logs). Quit Reel from its panel before either.
+
+### With your browser
+
 1. Download `Reel-<version>-macos-arm64.zip` from the
-   [latest release](../../releases/latest) and unzip it.
+   [latest release](https://github.com/RasanKhabat/reel/releases/latest) and unzip it.
 2. Move **Reel.app** to your **Applications** folder.
 3. Open it. Reel isn't signed with a paid Apple Developer ID, so the first time macOS says it
    can't verify the app. Open **System Settings → Privacy & Security**, scroll down, and click
@@ -24,8 +55,9 @@ and needs no changes to System Integrity Protection.
 5. Click the Reel icon in the menu bar (three side-by-side rectangles) and turn on
    **Tile windows**. Tick **Launch at login** in the same panel to start Reel automatically.
 
-Prefer to check what you run? Each release lists a SHA-256 checksum, or build it yourself
-(below).
+Prefer to check what you run? Each release lists a SHA-256 checksum
+(`shasum -a 256 -c Reel-<version>-macos-arm64.zip.sha256` in the download folder), or build it
+yourself (below).
 
 ### Uninstall
 

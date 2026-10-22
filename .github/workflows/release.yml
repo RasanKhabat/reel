@@ -1,5 +1,6 @@
 name: Release
-# Push a tag like v0.2.0 to build Reel and publish it as a GitHub Release.
+# Push a tag like v0.3.0 to build Reel, publish it as a GitHub Release, and point the
+# Homebrew tap (RasanKhabat/homebrew-reel) at the new version.
 on:
   push:
     tags: ["v*"]
@@ -10,6 +11,10 @@ permissions:
 jobs:
   release:
     runs-on: macos-15   # Apple silicon; its Xcode provides swiftc for the panel
+    env:
+      # A fine-grained token with Contents: read and write on homebrew-reel only. Without it,
+      # the tap step is skipped.
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Unit tests
@@ -20,3 +25,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 --title "Reel $GITHUB_REF_NAME" --generate-notes
+      - name: Update Homebrew tap
+        if: env.TAP_TOKEN != ''
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA=$(cut -d' ' -f1 "dist/Reel-$VERSION-macos-arm64.zip.sha256")
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/RasanKhabat/homebrew-reel.git" tap
+          cd tap
+          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/reel.rb
+          git diff --stat
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -am "reel $VERSION"
+          git push

@@ -1,5 +1,6 @@
 #!/bin/zsh
-# Builds a downloadable release: dist/Reel-<version>-macos-arm64.zip (+ .sha256).
+# Builds a downloadable release: dist/Reel-<version>-macos-arm64.zip (+ .sha256), plus a
+# copy named dist/Reel-macos-arm64.zip.
 # Release builds are ad-hoc signed: nobody else has your local signing certificate, and
 # without a paid Apple Developer ID every unsigned download needs "Open Anyway" once anyway.
 set -euo pipefail
@@ -18,6 +19,9 @@ mkdir -p dist
 ZIP="dist/Reel-$VERSION-macos-arm64.zip"
 rm -f "$ZIP"
 ditto -c -k --norsrc --noextattr --keepParent "$APP" "$ZIP"
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+(cd dist && shasum -a 256 "$(basename "$ZIP")") | tee "$ZIP.sha256"
+# Same zip under a fixed name, so .../releases/latest/download/Reel-macos-arm64.zip always
+# fetches the newest version (used by the README's Terminal install).
+cp "$ZIP" dist/Reel-macos-arm64.zip
 rm -rf "$STAGE"
 echo "Release: $ZIP"
