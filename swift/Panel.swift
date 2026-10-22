@@ -53,8 +53,6 @@ struct Bridge {
 
 /// Everything the panel shows, as produced by Rust.
 struct PanelState: Decodable {
-    struct Row: Decodable { let label: String; let detail: String; let focused: Bool }
-    struct Strip: Decodable { let name: String; let rows: [Row] }
     struct Item: Decodable { let title: String; let keys: String }
     struct Group: Decodable { let name: String; let items: [Item] }
     struct Experiment: Decodable {
@@ -85,7 +83,6 @@ struct PanelState: Decodable {
     var dim = false
     var gap = 8.0
     var failed: [String] = []
-    var strips: [Strip] = []
     var legend = ""
     var groups: [Group] = []
     var windows: [Win] = []
@@ -117,6 +114,15 @@ final class PanelController: NSObject {
         popover.behavior = .transient
         popover.delegate = self
         model.close = { [weak self] in self?.close() }
+        // Opening Reel again (Finder, Spotlight, `open`) while it runs shows the panel, since
+        // a menu bar icon is easy to lose behind the notch.
+        NSAppleEventManager.shared().setEventHandler(
+            self, andSelector: #selector(reopen(_:reply:)),
+            forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
+    }
+
+    @objc private func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        show()
     }
 
     @objc private func toggle() {
@@ -186,7 +192,7 @@ final class PanelModel: ObservableObject {
 // MARK: View
 
 struct PanelView: View {
-    static let size = NSSize(width: 400, height: 640)
+    static let size = NSSize(width: 400, height: 520)
 
     static let presets = [("ctrlOpt", "⌃⌥ arrows"), ("shift", "⇧ arrows"), ("custom", "Customize")]
     static let modifiers = [("ctrlOpt", "⌃⌥"), ("shift", "⇧"), ("option", "⌥"), ("command", "⌘"), ("control", "⌃")]
@@ -209,15 +215,10 @@ struct PanelView: View {
             if s.trusted {
                 Toggle("Tile windows", isOn: model.binding({ $0.tiling }, "tiling"))
                     .toggleStyle(.switch)
-                if s.tiling {
-                    // Settings stay put; only the (possibly long) window list scrolls.
-                    settingsSection
-                    Divider()
-                }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
                         if s.tiling {
-                            stripLists
+                            settingsSection
                             if s.hasStacks {
                                 Button("Unstack all" + (s.unstackKeys.map { " (\($0))" } ?? "")) { model.send("unstackAll") }
                             }
@@ -336,30 +337,6 @@ struct PanelView: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button("Open Accessibility Settings") { model.send("openAccessibility") }
-        }
-    }
-
-    private var stripLists: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(s.strips.enumerated()), id: \.offset) { si, strip in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(strip.name) · \(strip.rows.count) columns").font(.caption).foregroundStyle(.secondary)
-                    ForEach(Array(strip.rows.enumerated()), id: \.offset) { ci, row in
-                        // Clicking a column scrolls to it and focuses its window.
-                        Button { model.send("select", "\(si),\(ci)") } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: row.focused ? "largecircle.fill.circle" : "circle")
-                                    .foregroundStyle(row.focused ? Color.accentColor : .secondary)
-                                Text(row.label).lineLimit(1)
-                                Spacer(minLength: 4)
-                                Text(row.detail).font(.caption2).foregroundStyle(.secondary)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
         }
     }
 

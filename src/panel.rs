@@ -35,18 +35,13 @@ pub fn close() {
 }
 
 /// Development aid: draws the panel with the current settings into a PNG. With
-/// `tiling`, shows the tiling view with a few sample columns.
+/// `tiling`, shows the tiling view.
 pub fn render_preview(path: &str, tiling: bool) -> bool {
     refresh_windows();
     let Some(mut v) = read() else { return false };
     if tiling {
         v["tiling"] = json!(true);
         v["hasStacks"] = json!(true);
-        v["strips"] = json!([{ "name": "Columns", "rows": [
-            { "label": "Safari — Apple", "detail": "50%", "focused": false },
-            { "label": "Terminal — zsh", "detail": "50% · stack of 2", "focused": true },
-            { "label": "Notes", "detail": "33%", "focused": false },
-        ]}]);
     }
     let (Ok(json), Ok(path)) = (CString::new(v.to_string()), CString::new(path)) else { return false };
     unsafe { reel_panel_render(json.as_ptr(), path.as_ptr()) }
@@ -81,34 +76,6 @@ extern "C" fn action(name: *const c_char, value: *const c_char) {
 
 fn read() -> Option<Value> {
     crate::with_desk_sync(|d| {
-        let multi = d.strips.len() > 1;
-        let strips: Vec<Value> = d
-            .strips
-            .iter()
-            .map(|s| {
-                let rows: Vec<Value> = s
-                    .strip
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        let w = c.focused_window().and_then(|id| s.wins.get(&id));
-                        let label = w
-                            .map(|w| {
-                                let t = w.title();
-                                if t.is_empty() { w.app.clone() } else { format!("{} — {}", w.app, t) }
-                            })
-                            .unwrap_or_else(|| "?".into());
-                        let mut detail = format!("{}%", (c.share * 100.0).round());
-                        if c.windows.len() > 1 {
-                            detail += &if c.tabbed { format!(" · {} tabs", c.windows.len()) } else { format!(" · stack of {}", c.windows.len()) };
-                        }
-                        json!({ "label": label, "detail": detail, "focused": i == s.strip.focus })
-                    })
-                    .collect();
-                json!({ "name": if multi { s.display.name.clone() } else { "Columns".into() }, "rows": rows })
-            })
-            .collect();
         let bindings = d.bindings();
         let groups: Vec<Value> = Command::groups()
             .into_iter()
@@ -142,7 +109,6 @@ fn read() -> Option<Value> {
             "dim": d.dim_inactive,
             "gap": d.gap(),
             "failed": d.failed_shortcuts.iter().map(|c| c.glyphs()).collect::<Vec<_>>(),
-            "strips": strips,
             "legend": MODIFIER_LEGEND,
             "groups": groups,
             "windows": if d.is_tiling { vec![] } else { WINDOWS.with(|w| w.borrow().clone()) },
@@ -210,18 +176,6 @@ fn perform(name: &str, value: &str) {
         "gap" => {
             if let Ok(v) = value.parse::<f64>() {
                 crate::with_desk(move |d| d.set_gap(v.clamp(0.0, 32.0)));
-            }
-        }
-        "select" => {
-            let mut it = value.split(',').filter_map(|x| x.parse::<usize>().ok());
-            if let (Some(si), Some(ci)) = (it.next(), it.next()) {
-                crate::with_desk(move |d| {
-                    if let Some(s) = d.strips.get_mut(si) {
-                        let row = s.strip.columns.get(ci).map(|c| c.row).unwrap_or(0);
-                        s.select(ci, row);
-                    }
-                    crate::ensure_clock();
-                });
             }
         }
         "unstackAll" => crate::with_desk(|d| d.unstack_all()),
