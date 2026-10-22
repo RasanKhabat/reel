@@ -237,3 +237,21 @@ Files: `Strip.swift` (pure model), `StripController.swift` (one display), `Desk.
   5. (Rust port) animations started by window events never started the frame clock.
 - Test-runner fixes: always closes host, test Reel and watchdog (end, failure, interrupt);
   clears leftovers before starting; recovery check no longer races the ready file.
+
+## Swift panel in the Rust app (Oct 22)
+- Tried switching the published app back to Swift (0.3.0), then reverted and removed it from
+  history. The Swift version with the ported fixes stays in `../reel-swift`.
+- Instead, the Rust app now uses the Swift version's SwiftUI menu bar panel: `swift/Panel.swift`
+  is compiled by `build.rs` (`xcrun swiftc -emit-library -static`) and linked into the Rust
+  binary. Only `swiftc` is needed (Command Line Tools), not SwiftPM or Xcode.
+- Interface (C ABI, main thread only): `reel_panel_install(state, free, action)`,
+  `reel_panel_close()`. `state()` returns the panel's state as JSON (`src/panel.rs`);
+  `action(name, value)` carries out a change. The panel re-reads the state every 0.5 s while
+  open, and right after each action. If the desk is busy, the last state is reused.
+- Linking notes: Swift availability checks need `___isPlatformVersionAtLeast` from
+  `libclang_rt.osx.a`; Rust's deployment target is set to 13.0 (`.cargo/config.toml`) to
+  match. The Swift runtime comes from the OS (`/usr/lib/swift`).
+- Native NSMenu (`menu.rs`) and its MenuDelegate class removed. Column rows in the panel are
+  clickable (kept from the Rust menu). The shortcut editor stays the Rust/AppKit one.
+- Verified: clippy clean, 25 unit tests, 111/111 end-to-end, panel rendered via
+  `--render-panel` in both states.

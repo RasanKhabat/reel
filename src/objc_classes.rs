@@ -3,7 +3,7 @@
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
-use objc2_app_kit::{NSEvent, NSMenu, NSMenuDelegate, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindowDelegate};
+use objc2_app_kit::{NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindowDelegate};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSPoint};
 use std::cell::RefCell;
 
@@ -38,34 +38,6 @@ impl Target {
 
     pub fn action() -> objc2::runtime::Sel {
         sel!(fire:)
-    }
-}
-
-pub struct MenuDelegateIvars {
-    f: Box<dyn Fn(&NSMenu)>,
-}
-
-define_class!(
-    /// Rebuilds a menu each time it's about to open.
-    #[unsafe(super = NSObject)]
-    #[thread_kind = MainThreadOnly]
-    #[ivars = MenuDelegateIvars]
-    pub struct MenuDelegate;
-
-    unsafe impl NSObjectProtocol for MenuDelegate {}
-
-    unsafe impl NSMenuDelegate for MenuDelegate {
-        #[unsafe(method(menuNeedsUpdate:))]
-        fn menu_needs_update(&self, menu: &NSMenu) {
-            (self.ivars().f)(menu);
-        }
-    }
-);
-
-impl MenuDelegate {
-    pub fn new(mtm: MainThreadMarker, f: impl Fn(&NSMenu) + 'static) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(MenuDelegateIvars { f: Box::new(f) });
-        unsafe { msg_send![super(this), init] }
     }
 }
 

@@ -21,15 +21,15 @@ and needs no changes to System Integrity Protection.
    On older macOS versions you can instead right-click Reel.app → **Open** → **Open**.
 4. macOS then asks to allow Reel under **Privacy & Security → Accessibility**. Turn it on;
    Reel needs this to move and resize other apps' windows, and notices within a second.
-5. Click the Reel icon in the menu bar (three side-by-side rectangles) and choose
-   **Tile Windows**. Turn on **Launch at Login** in the same menu to start Reel automatically.
+5. Click the Reel icon in the menu bar (three side-by-side rectangles) and turn on
+   **Tile windows**. Tick **Launch at login** in the same panel to start Reel automatically.
 
 Prefer to check what you run? Each release lists a SHA-256 checksum, or build it yourself
 (below).
 
 ### Uninstall
 
-Quit Reel from its menu (this puts all windows back on screen), turn off **Launch at Login**
+Quit Reel from its panel (this puts all windows back on screen), untick **Launch at login**
 if you enabled it, delete **Reel.app**, and optionally remove its settings:
 
 ```bash
@@ -41,7 +41,8 @@ Then remove Reel from **Privacy & Security → Accessibility**.
 
 ## Build from source
 
-You need [Rust](https://rustup.rs) and Apple's Command Line Tools. Xcode is **not** needed.
+You need [Rust](https://rustup.rs) and Apple's Command Line Tools (they include `swiftc`, which
+builds the menu bar panel). Xcode is **not** needed.
 
 ```bash
 xcode-select --install                                           # Command Line Tools (once)
@@ -73,8 +74,8 @@ Shortcuts are shown with the standard Mac symbols:
 
 ## Shortcuts
 
-Shortcuts only work while **Tile Windows** is on. Choose a layout in the Reel menu under
-**Shortcuts**: **⌃⌥ Arrows**, **⇧ Arrows**, or **Custom** to set your own.
+Shortcuts only work while **Tile windows** is on. Choose a layout in the Reel panel under
+**Shortcuts**: **⌃⌥ arrows**, **⇧ arrows**, or **Customize** to set your own.
 
 The two built-in layouts differ only in the arrow keys:
 
@@ -113,17 +114,17 @@ Everything else is the same in both layouts:
 
 Hold the scroll modifier and swipe two fingers sideways on the trackpad (or turn the mouse
 wheel) to slide the strip under the pointer; let go and it glides to the nearest column.
-In the Reel menu:
+In the Reel panel:
 
-- **Scroll With** picks the modifier: ⌃⌥ (⌃ Control + ⌥ Option, the default), ⇧ Shift,
+- **Scroll with** picks the modifier: ⌃⌥ (⌃ Control + ⌥ Option, the default), ⇧ Shift,
   ⌥ Option, ⌘ Command or ⌃ Control. While tiling is on, Reel takes over that combination,
   e.g. with ⇧ Shift, Shift + scroll no longer scrolls sideways inside apps.
-- **Scroll Speed** (1× to 4×, default 2×) sets how far the strip moves per swipe.
+- **Scroll speed** (1× to 4×, default 2×) sets how far the strip moves per swipe.
 
 ### Your own shortcuts
 
-In the Reel menu open **Shortcuts → Custom** (or **Edit Shortcuts…**). In the window that
-opens, click an action and press the keys you want:
+In the Reel panel pick **Shortcuts → Customize** (afterwards, **Edit shortcuts…** reopens it).
+In the window that opens, click an action and press the keys you want:
 
 - **Esc** cancels, **⌫ Delete** removes the action's shortcut.
 - A key combination can only do one thing; giving it to a second action takes it away from
@@ -133,8 +134,8 @@ opens, click an action and press the keys you want:
   Home/End, Page Up/Down).
 - **Reset everything to** puts back either built-in layout.
 
-The **Shortcuts** submenu always lists the shortcuts that are currently active, with every
-key spelled out.
+**Keyboard shortcuts** in the Reel panel always lists the shortcuts that are currently active,
+with every key spelled out.
 
 ## What else it does
 
@@ -145,23 +146,23 @@ key spelled out.
 - **Stacks and tabs**: several windows can share a column, split top to bottom or as tabs.
 - **Overview**: a small map above the Dock shows every column, the focused window and which
   part of the strip is on screen. Click a block to jump there. Choose when it appears
-  (*On Change*, *Always*, *Off*) in the menu.
-- **Focus Border / Dim Inactive Windows**: optional highlights, in the menu.
+  (*On change*, *Always*, *Off*) in the panel; clicking a column in the panel's list works too.
+- **Focus border / Dim inactive**: optional highlights, in the panel.
 - **One strip per display.**
 - **Remembers your layout** (order, stacks, widths) across restarts, in
   `~/Library/Application Support/Reel/layout.json`.
-- **Launch at login**: checkbox at the top of the menu.
+- **Launch at login**: checkbox at the top of the panel.
 
 ## Troubleshooting
 
 - **Nothing moves**: check Reel is allowed under Privacy & Security → Accessibility and that
-  **Tile Windows** is on.
-- **A shortcut does nothing**: the menu lists any shortcut macOS refused; a diagnostic log is
-  at `~/Library/Logs/Reel/reel.log` (**Open Log** in the menu).
+  **Tile windows** is on.
+- **A shortcut does nothing**: the panel lists any shortcut macOS refused; a diagnostic log is
+  at `~/Library/Logs/Reel/reel.log` (**Open log** in the panel).
 - **Windows stuck off screen** (e.g. after Reel was force-quit): just open Reel again. With
   tiling on it picks them back up; with tiling off it moves them back on screen at launch, and
-  **Bring back off-screen windows** in the menu does it any time. Quitting Reel normally
-  (menu → Quit, or Quit in Activity Monitor) always brings windows back first; only
+  **Bring back off-screen windows** in the panel (with tiling off) does it any time. Quitting
+  Reel normally (panel → Quit, or Quit in Activity Monitor) always brings windows back first; only
   *Force Quit* can't, because macOS gives the app no chance to clean up.
 - **An app won't resize**: some apps have fixed or minimum sizes. Reel follows what the app
   accepts and beeps if a width change was impossible.
@@ -175,7 +176,10 @@ key spelled out.
 - Reel has a test mode (`--test-pid <pid> --test-dir <dir>`) in which it manages only one
   process's windows and takes commands over a distributed notification; end-to-end tests use
   it to drive Reel against dummy windows without touching real ones.
-- Diagnostics: `~/Library/Logs/Reel/reel.log` (**Open Log** in the menu).
+- The menu bar panel is SwiftUI (`swift/Panel.swift`); `build.rs` compiles it with `swiftc` into
+  a static library linked into the Rust binary. It only displays state and sends actions;
+  `src/panel.rs` is the Rust side. `Reel --render-panel out.png [--tiling]` draws it to an image.
+- Diagnostics: `~/Library/Logs/Reel/reel.log` (**Open log** in the panel).
 
 ## License
 

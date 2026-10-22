@@ -16,10 +16,10 @@ mod input;
 mod layout_store;
 mod log;
 mod login_item;
-mod menu;
 mod mover;
 mod objc_classes;
 mod overlays;
+mod panel;
 mod prefs;
 mod shortcuts;
 mod spring;
@@ -95,7 +95,7 @@ pub fn ensure_clock() {
 }
 
 pub fn close_menu() {
-    menu::close();
+    panel::close();
 }
 
 /// The pointer position in AX (top-left origin) coordinates.
@@ -230,11 +230,17 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-    watchdog::start();
     DESK.with(|d| *d.borrow_mut() = Some(Desk::new(mtm)));
     input::set_sink(|i| with_desk(move |d| d.input(i)));
+    // Development aid: `Reel --render-panel <file.png> [--tiling]` draws the panel and exits.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--render-panel") {
+        let ok = args.get(i + 1).is_some_and(|p| panel::render_preview(p, args.iter().any(|a| a == "--tiling")));
+        std::process::exit(if ok { 0 } else { 1 });
+    }
+    watchdog::start();
     if !test_mode::is_on() {
-        menu::install(mtm);
+        panel::install();
     }
     let trusted = ax::is_trusted();
     log::write(&format!(

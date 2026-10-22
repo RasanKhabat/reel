@@ -1,0 +1,3 @@
+# Same minimum macOS as the Swift panel and Info.plist.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.0"
