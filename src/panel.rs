@@ -132,6 +132,11 @@ fn read() -> Option<Value> {
             "scrollSpelled": d.scroll_modifier.spelled(),
             "scrollCaveat": d.scroll_modifier.caveat(),
             "scrollSpeed": d.scroll_speed,
+            "animationSpeed": crate::spring::speed(),
+            "experiments": crate::experiments::Exp::ALL.iter().map(|e| json!({
+                "key": e.key(), "title": e.title(), "detail": e.detail(),
+                "on": crate::experiments::on(*e),
+            })).collect::<Vec<_>>(),
             "overview": d.overview_mode.raw(),
             "border": d.show_border,
             "dim": d.dim_inactive,
@@ -175,6 +180,18 @@ fn perform(name: &str, value: &str) {
         "scrollSpeed" => {
             if let Ok(v) = value.parse::<f64>() {
                 crate::with_desk(move |d| d.set_scroll_speed(v.clamp(1.0, 4.0)));
+            }
+        }
+        "experiment" => {
+            if let Some((key, v)) = value.split_once('=') {
+                if let Some(e) = crate::experiments::Exp::from_key(key) {
+                    crate::experiments::set(e, v == "1", true);
+                }
+            }
+        }
+        "animationSpeed" => {
+            if let Ok(v) = value.parse::<f64>() {
+                crate::with_desk(move |d| d.set_animation_speed(v));
             }
         }
         "overview" => {

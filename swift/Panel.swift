@@ -57,6 +57,10 @@ struct PanelState: Decodable {
     struct Strip: Decodable { let name: String; let rows: [Row] }
     struct Item: Decodable { let title: String; let keys: String }
     struct Group: Decodable { let name: String; let items: [Item] }
+    struct Experiment: Decodable {
+        let key: String; let title: String; let detail: String
+        let on: Bool
+    }
     struct Win: Decodable {
         let title: String; let app: String
         let x: Double; let y: Double; let w: Double; let h: Double
@@ -74,6 +78,8 @@ struct PanelState: Decodable {
     var scrollSpelled = ""
     var scrollCaveat: String? = nil
     var scrollSpeed = 2.0
+    var animationSpeed = 1.0
+    var experiments: [Experiment] = []
     var overview = "auto"
     var border = false
     var dim = false
@@ -188,6 +194,7 @@ struct PanelView: View {
 
     @ObservedObject var model: PanelModel
     @State private var showShortcuts = false
+    @State private var showExperiments = false
 
     private var s: PanelState { model.s }
 
@@ -262,6 +269,16 @@ struct PanelView: View {
                                   set: { model.send("scrollSpeed", String(($0 * 4).rounded() / 4)) }), in: 1...4)
             Text(String(format: "%.2g×", s.scrollSpeed)).font(.caption).monospacedDigit().frame(width: 36, alignment: .trailing)
         }
+        HStack {
+            Text("Animation speed").font(.caption)
+            Slider(value: Binding(get: { s.animationSpeed },
+                                  set: { model.send("animationSpeed", String(($0 * 4).rounded() / 4)) }), in: 0.5...2.5)
+            Text(String(format: "%.2g×", s.animationSpeed)).font(.caption).monospacedDigit().frame(width: 36, alignment: .trailing)
+        }
+        DisclosureGroup("Animation experiments", isExpanded: $showExperiments) {
+            ScrollView { experimentList }.frame(maxHeight: 210)
+        }
+        .font(.caption)
         Picker("Overview", selection: model.choice({ $0.overview }, "overview")) {
             ForEach(Self.overviews, id: \.0) { Text($0.1).tag($0.0) }
         }
@@ -290,6 +307,26 @@ struct PanelView: View {
             ScrollView { shortcutList }.frame(maxHeight: 170)
         }
         .font(.caption)
+    }
+
+    /// Every switch is independent and off by default.
+    private var experimentList: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(s.experiments, id: \.key) { e in
+                experimentRow(title: e.title, detail: e.detail,
+                              isOn: Binding(get: { e.on }, set: { model.send("experiment", "\(e.key)=\($0 ? "1" : "0")") }))
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func experimentRow(title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Toggle(title, isOn: isOn).toggleStyle(.checkbox)
+            Text(detail).font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+        }
     }
 
     private var permissionPrompt: some View {

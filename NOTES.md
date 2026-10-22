@@ -255,3 +255,24 @@ Files: `Strip.swift` (pure model), `StripController.swift` (one display), `Desk.
   clickable (kept from the Rust menu). The shortcut editor stays the Rust/AppKit one.
 - Verified: clippy clean, 25 unit tests, 111/111 end-to-end, panel rendered via
   `--render-panel` in both states.
+
+## Animation work (Oct 22, local only, not committed)
+- Springs now match the web demo: critically damped, ω 13 for the strip's scroll, ω 15 for
+  columns (were one 0.24 s spring, about 2× faster). New **Animation speed** slider (0.5–2.5×).
+- Reel's own per-frame work was already ~0.07 ms; the choppiness is other apps applying AX
+  moves late. Hence the experiments below, each an independent switch, off by default, in the
+  panel's "Animation experiments" section (`src/experiments.rs`, saved as `exp.<key>`):
+  - Live resizing: width changes animate on the real window (size sent with each move).
+  - Pause enhanced UI: `AXEnhancedUserInterface` (undocumented) off while moving, restored after.
+  - Focus after the glide: the focus/raise waits until the move settles.
+  - High-priority move threads: mover threads at QOS_CLASS_USER_INTERACTIVE.
+  - Eased curve: cubic Hermite over a fixed duration (0.42 s at 1×), keeps velocity on retarget.
+  - Softer swipe tracking: finger-follow spring response 0.13 s instead of 0.06 s.
+  - Steady 60 Hz: real windows get positions at most every 15 ms; final frame always sent.
+- Test mode: `exp:<key>:on|off`; a runner scenario turns them all on and checks layouts.
+- Removed: snapshot moves/swipes/resizing (ScreenCaptureKit pictures in an overlay while the
+  real windows waited below the screen). Capturing took 40–120 ms before each move, the user
+  saw no improvement, and quick key presses made windows flicker: the next move dropped the
+  pictures before the real windows were back in place.
+- Testing caveat: with the screen locked, Accessibility sees no windows (the runner now says
+  so and stops) and codesign can't reach the keychain.

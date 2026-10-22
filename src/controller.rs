@@ -10,10 +10,10 @@ use crate::ax::{self, Element};
 use crate::geometry::{Display, Rect};
 use crate::layout_store::{self, SavedColumn, SavedStrip, WindowDescriptor};
 use crate::overlays::{Overview, Ring, Snapshot, TabBar, Tile};
-use crate::spring::{Spring, NORMAL_RESPONSE};
+use crate::spring::{Spring, COLUMN_OMEGA, SCROLL_OMEGA};
 use crate::strip::{ColId, Strip, WinId};
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -22,6 +22,8 @@ use std::time::Instant;
 const PEEK: f64 = 2.0;
 /// While fingers are down the strip chases them on a very stiff spring.
 const DRAG_RESPONSE: f64 = 0.06;
+/// Experiment "softer swipe tracking": filters uneven scroll events more.
+const SMOOTH_DRAG_RESPONSE: f64 = 0.13;
 
 /// A real window Reel manages.
 #[derive(Clone)]
@@ -128,6 +130,18 @@ pub struct StripController {
     stat_moves: u32,
     stat_total: f64,
     stat_max: f64,
+    /// Experiment "steady 60 Hz": when real windows were last sent positions, and whether
+    /// this frame skips sending.
+    last_ax_post: Instant,
+    skip_ax: bool,
+    /// Experiment "focus after the glide": focus the focused window once moving stops.
+    focus_pending: bool,
+    /// Last size sent to each window during live resizing.
+    last_sized: HashMap<WinId, (f64, f64)>,
+    /// Width animations: window → (spring over the width, final height).
+    width_anim: HashMap<WinId, (Spring, f64)>,
+    /// Experiment "pause enhanced UI": apps whose AXEnhancedUserInterface Reel turned off.
+    eui_paused: HashSet<i32>,
 }
 
 impl StripController {
@@ -144,7 +158,7 @@ impl StripController {
             show_border: false,
             dim_inactive: false,
             on_overlay,
-            offset: Spring::new(0.0),
+            offset: Spring::new(0.0, SCROLL_OMEGA),
             column_x: HashMap::new(),
             applied: HashMap::new(),
             row_y: HashMap::new(),
@@ -162,6 +176,12 @@ impl StripController {
             stat_moves: 0,
             stat_total: 0.0,
             stat_max: 0.0,
+            last_ax_post: Instant::now(),
+            skip_ax: false,
+            focus_pending: false,
+            last_sized: HashMap::new(),
+            width_anim: HashMap::new(),
+            eui_paused: HashSet::new(),
         }
     }
 
@@ -259,7 +279,7 @@ impl StripController {
         for col in &self.strip.columns {
             if let std::collections::hash_map::Entry::Vacant(slot) = self.column_x.entry(col.id) {
                 if let Some(x) = col.windows.first().and_then(|w| current_x.get(w)) {
-                    slot.insert(Spring::new(x - base));
+                    slot.insert(Spring::new(x - base, COLUMN_OMEGA));
                 }
             }
         }
@@ -267,6 +287,10 @@ impl StripController {
     }
 
     pub fn stop(&mut self) {
+        self.restore_enhanced_ui();
+        self.width_anim.clear();
+        self.last_sized.clear();
+        self.focus_pending = false;
         self.animating = false;
         self.overview.close();
         self.tab_bars.clear();
@@ -296,7 +320,9 @@ impl StripController {
 
     fn prepare(&mut self) -> bool {
         self.prune_gone();
-        if !focus_guard_armed() {
+        // With "focus after the glide" the system still shows the old window as focused
+        // until the move ends; don't let that undo Reel's own focus.
+        if !focus_guard_armed() && !self.focus_pending {
             self.sync_focus_with_system();
         }
         match self.strip.focused_window().and_then(|id| self.wins.get(&id)) {
@@ -319,8 +345,12 @@ impl StripController {
         beep();
     }
 
-    pub fn focus_focused_window(&self) {
+    pub fn focus_focused_window(&mut self) {
         arm_focus_guard();
+        if self.animating && crate::experiments::on(crate::experiments::Exp::FocusAfterGlide) {
+            self.focus_pending = true; // done when the move settles
+            return;
+        }
         if let Some(w) = self.strip.focused_window().and_then(|id| self.wins.get(&id)) {
             w.focus();
             // An app that comes to the front sometimes nudges its window a few points a
@@ -480,7 +510,7 @@ impl StripController {
     }
 
     /// Gives keyboard focus to this strip's focused window (switching displays).
-    pub fn activate(&self) {
+    pub fn activate(&mut self) {
         if !self.strip.columns.is_empty() {
             self.focus_focused_window();
         }
@@ -598,7 +628,8 @@ impl StripController {
 
     pub fn begin_drag(&mut self) {
         self.drag_raw = Some(self.offset.value);
-        self.offset.response = DRAG_RESPONSE;
+        let smooth = crate::experiments::on(crate::experiments::Exp::SwipeSmoothing);
+        self.offset.response = Some(if smooth { SMOOTH_DRAG_RESPONSE } else { DRAG_RESPONSE });
         self.overview.show();
         self.start_animating();
     }
@@ -616,7 +647,7 @@ impl StripController {
         if self.drag_raw.take().is_none() {
             return;
         }
-        self.offset.response = NORMAL_RESPONSE;
+        self.offset.response = None;
         let v = (-velocity).clamp(-8000.0, 8000.0);
         let rest = self.strip.resting_offset(self.offset.target + v * 0.2);
         self.strip.offset = rest;
@@ -640,8 +671,37 @@ impl StripController {
     /// that starts an animation goes through here, so nothing can be left waiting for a
     /// clock that isn't ticking.
     fn start_animating(&mut self) {
+        if !self.animating && crate::experiments::on(crate::experiments::Exp::PauseEnhancedUi) {
+            self.pause_enhanced_ui();
+        }
         self.animating = true;
         crate::ensure_clock();
+    }
+
+    /// Experiment "pause enhanced UI": while this accessibility mode is on, some apps
+    /// (Chromium, Electron) animate or delay their own window moves. Off while Reel moves
+    /// them, back on afterwards. `AXEnhancedUserInterface` is undocumented.
+    fn pause_enhanced_ui(&mut self) {
+        let pids: HashSet<i32> = self.wins.values().map(|w| w.pid).collect();
+        for pid in pids {
+            if self.eui_paused.contains(&pid) {
+                continue;
+            }
+            let app = Element::application(pid);
+            app.set_timeout(0.1);
+            if app.bool("AXEnhancedUserInterface") == Some(true) {
+                app.set_bool("AXEnhancedUserInterface", false);
+                self.eui_paused.insert(pid);
+            }
+        }
+    }
+
+    fn restore_enhanced_ui(&mut self) {
+        for pid in self.eui_paused.drain() {
+            let app = Element::application(pid);
+            app.set_timeout(0.1);
+            app.set_bool("AXEnhancedUserInterface", true);
+        }
     }
 
     pub fn is_dragging(&self) -> bool {
@@ -681,6 +741,19 @@ impl StripController {
                     if self.applied.get(id) == Some(&(w, rh)) {
                         continue;
                     }
+                    // Experiment "live resizing": a width-only change animates instead of
+                    // jumping (see `push_frame` and `finish_width_anims`).
+                    if let Some(&(aw, ah)) = self.applied.get(id) {
+                        let animate = animated && !reduce_motion() && (ah - rh).abs() <= 1.0 && (aw - w).abs() > 1.0
+                            && crate::experiments::on(crate::experiments::Exp::LiveResize);
+                        if animate {
+                            let mut sp = self.width_anim.get(id).map(|a| a.0).unwrap_or_else(|| Spring::new(aw, COLUMN_OMEGA));
+                            sp.target = w;
+                            self.width_anim.insert(*id, (sp, rh));
+                            self.applied.insert(*id, (w, rh));
+                            continue;
+                        }
+                    }
                     let Some(win) = self.wins.get(id) else { continue };
                     // Move to the new row's top edge *before* resizing: macOS caps a
                     // window's height to the space below its current origin.
@@ -717,7 +790,7 @@ impl StripController {
         let (xs, _) = self.strip.column_edges();
         let live: Vec<ColId> = self.strip.columns.iter().map(|c| c.id).collect();
         for (col, x) in self.strip.columns.iter().zip(xs) {
-            self.column_x.entry(col.id).or_insert_with(|| Spring::new(x)).target = x;
+            self.column_x.entry(col.id).or_insert_with(|| Spring::new(x, COLUMN_OMEGA)).target = x;
         }
         self.column_x.retain(|id, _| live.contains(id));
         if self.drag_raw.is_none() {
@@ -779,9 +852,26 @@ impl StripController {
             s.advance(dt);
             settled &= s.is_settled();
         }
+        for (sp, _) in self.width_anim.values_mut() {
+            sp.advance(dt);
+            settled &= sp.is_settled();
+        }
+        use crate::experiments::{on, Exp};
+        self.skip_ax = on(Exp::Steady60) && !settled && self.last_ax_post.elapsed() < std::time::Duration::from_millis(15);
         self.push_frame(false);
+        self.skip_ax = false;
+        if settled && self.drag_raw.is_none() && !self.width_anim.is_empty() {
+            self.finish_width_anims();
+        }
         if settled && self.drag_raw.is_none() {
             self.animating = false;
+            if !self.eui_paused.is_empty() {
+                crate::mover::Mover::flush(std::time::Duration::from_millis(100));
+                self.restore_enhanced_ui();
+            }
+            if std::mem::take(&mut self.focus_pending) {
+                self.focus_focused_window();
+            }
             self.verify_sizes();
             if self.stat_frames > 0 {
                 crate::log::write(&format!(
@@ -798,6 +888,35 @@ impl StripController {
             self.stat_max = 0.0;
         }
         self.animating
+    }
+
+    // MARK: Width animation
+
+    /// A width animation ended: make sure each window really has its final size, and if an
+    /// app refused it (fixed or minimum widths), let the column follow what it accepted.
+    fn finish_width_anims(&mut self) {
+        crate::mover::Mover::flush(std::time::Duration::from_millis(150));
+        let mut refused = false;
+        for (id, (sp, h)) in std::mem::take(&mut self.width_anim) {
+            self.last_sized.remove(&id);
+            let Some(win) = self.wins.get(&id) else { continue };
+            let Some(got) = win.el.size() else { continue };
+            if (got.width - sp.target).abs() > 1.0 || (got.height - h).abs() > 1.0 {
+                win.el.set_size(sp.target, h);
+                let again = win.el.size().map(|s| s.width).unwrap_or(sp.target);
+                if (again - sp.target).abs() > 1.0 {
+                    if let Some(c) = self.strip.columns.iter_mut().find(|c| c.windows.contains(&id)) {
+                        c.accepted_width = Some(again);
+                        refused = true;
+                    }
+                    self.applied.insert(id, (again, h));
+                }
+            }
+        }
+        if refused {
+            self.strip.scroll_focus_into_view();
+            self.commit(true, false);
+        }
     }
 
     /// After an animation settles, re-check the real size of every window that's on screen
@@ -852,12 +971,17 @@ impl StripController {
             for id in &col.windows {
                 let y = if hidden { full.max_y() - PEEK } else { area.y + self.row_y.get(id).copied().unwrap_or(self.strip.gap) };
                 let p = (x.round(), y.round());
-                if force_all || self.last_pushed.get(id) != Some(&p) {
+                let size = self.width_anim.get(id).map(|(sp, h)| (sp.value.round(), *h));
+                let resized = size.is_some() && self.last_sized.get(id) != size.as_ref();
+                if (force_all || resized || self.last_pushed.get(id) != Some(&p)) && !self.skip_ax {
                     if let Some(win) = self.wins.get(id) {
-                        crate::with_mover(|m| m.post(win.pid, id.0, &win.el, p.0, p.1));
+                        crate::with_mover(|m| m.post_frame(win.pid, id.0, &win.el, p.0, p.1, size));
                         moves += 1;
                     }
                     self.last_pushed.insert(*id, p);
+                    if let Some(s) = size {
+                        self.last_sized.insert(*id, s);
+                    }
                 }
                 if decor_on && !hidden {
                     if let Some(&(aw, ah)) = self.applied.get(id) {
@@ -873,6 +997,9 @@ impl StripController {
                 let rect = (!hidden).then(|| Rect::new(x, area.y + self.strip.gap, w, self.strip.tab_bar_height));
                 bar.place(rect, area, self.primary_height);
             }
+        }
+        if moves > 0 {
+            self.last_ax_post = Instant::now();
         }
         if decor_on {
             self.update_decor(focused_rect, others);
@@ -955,6 +1082,8 @@ impl StripController {
     // MARK: Housekeeping
 
     fn forget(&mut self, id: WinId) {
+        self.width_anim.remove(&id);
+        self.last_sized.remove(&id);
         self.wins.remove(&id);
         self.applied.remove(&id);
         self.row_y.remove(&id);

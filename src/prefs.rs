@@ -137,6 +137,12 @@ pub fn scroll_modifier() -> ScrollModifier {
     ScrollModifier::ALL.into_iter().find(|m| m.raw() == raw).unwrap_or(ScrollModifier::CtrlOpt)
 }
 
+/// Animation speed multiplier (1 = the web demo's feel).
+pub fn animation_speed() -> f64 {
+    let v = double("animationSpeed");
+    if v > 0.0 { v } else { 1.0 }
+}
+
 pub fn scroll_speed() -> f64 {
     let v = double("scrollSpeed");
     if v > 0.0 { v } else { 2.0 }

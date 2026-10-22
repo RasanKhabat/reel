@@ -10,6 +10,7 @@ mod controller;
 mod desk;
 mod editor;
 mod events;
+mod experiments;
 mod ffi;
 mod geometry;
 mod input;
@@ -230,6 +231,7 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
+    experiments::load();
     DESK.with(|d| *d.borrow_mut() = Some(Desk::new(mtm)));
     input::set_sink(|i| with_desk(move |d| d.input(i)));
     // Development aid: `Reel --render-panel <file.png> [--tiling]` draws the panel and exits.

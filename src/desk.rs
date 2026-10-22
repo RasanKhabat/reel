@@ -46,7 +46,10 @@ impl Desk {
             saved: layout_store::load(),
             preset: prefs::preset(),
             scroll_modifier: prefs::scroll_modifier(),
-            scroll_speed: prefs::scroll_speed(),
+            scroll_speed: {
+                crate::spring::set_speed(prefs::animation_speed());
+                prefs::scroll_speed()
+            },
             overview_mode: prefs::overview_mode(),
             show_border: prefs::bool("showFocusBorder"),
             dim_inactive: prefs::bool("dimInactive"),
@@ -544,6 +547,12 @@ impl Desk {
     pub fn set_scroll_speed(&mut self, v: f64) {
         self.scroll_speed = v;
         prefs::set_double("scrollSpeed", v);
+    }
+
+    /// How fast windows glide (1 = the web demo's feel). Applies to moves in progress too.
+    pub fn set_animation_speed(&mut self, v: f64) {
+        crate::spring::set_speed(v);
+        prefs::set_double("animationSpeed", crate::spring::speed());
     }
 
     pub fn set_overview_mode(&mut self, m: OverviewMode) {

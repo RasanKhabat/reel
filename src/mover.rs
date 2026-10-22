@@ -11,9 +11,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Where a window should be, and optionally its size (experiment "live resizing").
+type Wanted = (Element, f64, f64, Option<(f64, f64)>);
+
 struct Mailbox {
-    /// window key → (element, x, y); newer posts overwrite older ones.
-    pending: Mutex<HashMap<u64, (Element, f64, f64)>>,
+    /// window key → latest wanted frame; newer posts overwrite older ones.
+    pending: Mutex<HashMap<u64, Wanted>>,
     wake: Condvar,
     working: AtomicBool,
     stop: AtomicBool,
@@ -28,9 +31,15 @@ static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 impl Mover {
     pub fn post(&mut self, pid: i32, key: u64, element: &Element, x: f64, y: f64) {
+        self.post_frame(pid, key, element, x, y, None);
+    }
+
+    /// Like `post`, also setting the size. A later position-only post keeps the size.
+    pub fn post_frame(&mut self, pid: i32, key: u64, element: &Element, x: f64, y: f64, size: Option<(f64, f64)>) {
         let mb = self.boxes.entry(pid).or_insert_with(|| spawn(pid)).clone();
         let mut p = mb.pending.lock().unwrap();
-        if p.insert(key, (element.clone(), x, y)).is_none() {
+        let size = size.or_else(|| p.get(&key).and_then(|w| w.3));
+        if p.insert(key, (element.clone(), x, y, size)).is_none() {
             IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
         }
         drop(p);
@@ -70,8 +79,17 @@ fn spawn(pid: i32) -> Arc<Mailbox> {
     let worker = mb.clone();
     std::thread::Builder::new()
         .name(format!("reel-mover-{pid}"))
-        .spawn(move || loop {
-            let batch: Vec<(Element, f64, f64)> = {
+        .spawn(move || {
+            let mut boosted = false;
+            loop {
+            // Experiment "high-priority move threads".
+            let want = crate::experiments::on(crate::experiments::Exp::PriorityMovers);
+            if want != boosted {
+                let class = if want { libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE } else { libc::qos_class_t::QOS_CLASS_DEFAULT };
+                unsafe { libc::pthread_set_qos_class_self_np(class, 0) };
+                boosted = want;
+            }
+            let batch: Vec<Wanted> = {
                 let mut p = worker.pending.lock().unwrap();
                 while p.is_empty() && !worker.stop.load(Ordering::SeqCst) {
                     p = worker.wake.wait(p).unwrap();
@@ -83,11 +101,15 @@ fn spawn(pid: i32) -> Arc<Mailbox> {
                 worker.working.store(true, Ordering::SeqCst);
                 p.drain().map(|(_, v)| v).collect()
             };
-            for (el, x, y) in &batch {
+            for (el, x, y, size) in &batch {
                 el.set_position(*x, *y);
+                if let Some((w, h)) = size {
+                    el.set_size(*w, *h);
+                }
             }
             IN_FLIGHT.fetch_sub(batch.len(), Ordering::SeqCst);
             worker.working.store(false, Ordering::SeqCst);
+            }
         })
         .expect("spawn mover thread");
     mb

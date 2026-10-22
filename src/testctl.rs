@@ -55,6 +55,14 @@ fn run(command: String, id: String) {
             return;
         }
         "dump" => {}
+        // exp:<key>:on|off switches one animation experiment for this test instance.
+        c if c.starts_with("exp:") => {
+            let mut parts = c.split(':').skip(1);
+            match (parts.next().and_then(crate::experiments::Exp::from_key), parts.next()) {
+                (Some(e), Some(v)) => crate::experiments::set(e, v == "on", false),
+                _ => crate::log::write(&format!("unknown test command {c}")),
+            }
+        }
         other => match crate::shortcuts::Command::from_raw(other) {
             Some(c) => crate::with_desk(move |d| {
                 d.perform(c);
