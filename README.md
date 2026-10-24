@@ -133,7 +133,7 @@ Everything else is the same in both layouts:
 | Unstack all (every window its own column) | ⌃ Control + ⌥ Option + U |
 | Cycle width forward (⅓ → ½ → ⅔ → full) | ⌃ Control + ⌥ Option + R |
 | Cycle width back | ⌃ Control + ⌥ Option + ⇧ Shift + R |
-| Narrower / wider in small steps | ⌃ Control + ⌥ Option + - Minus / = Equals |
+| Next size down / up (⅙ ¼ ⅓ ½ ⅔ ¾ ⅚ full) | ⌃ Control + ⌥ Option + - Minus / = Equals |
 | Full width on / off | ⌃ Control + ⌥ Option + F |
 | Centre focused column | ⌃ Control + ⌥ Option + C |
 | Jump to column 1 … 9 | ⌃ Control + ⌥ Option + 1 … 9 |

@@ -40,8 +40,8 @@ impl Column {
 }
 
 pub const WIDTH_PRESETS: [f64; 4] = [1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0];
-pub const WIDTH_STEP: f64 = 1.0 / 12.0;
-pub const MIN_SHARE: f64 = 1.0 / 6.0;
+/// The sizes ⌃⌥- / ⌃⌥= step through (share of the screen width).
+pub const WIDTH_LADDER: [f64; 8] = [1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 0.75, 5.0 / 6.0, 1.0];
 
 #[derive(Clone, Debug)]
 pub struct Strip {
@@ -223,17 +223,25 @@ impl Strip {
         Some(next)
     }
 
-    /// Grows (positive) or shrinks (negative) the focused column by `steps` width steps,
-    /// snapping to the step grid. Returns false when already at the limit.
+    /// Grows (positive) or shrinks (negative) the focused column to the next size on
+    /// `WIDTH_LADDER`, `steps` sizes at a time. Off the ladder (e.g. after a manual resize)
+    /// the first step goes to the nearest size in the direction of travel. Doesn't wrap;
+    /// returns false when already at the smallest or largest size.
     pub fn adjust_focused_width(&mut self, steps: i32) -> bool {
         let Some(c) = self.columns.get(self.focus) else { return false };
         let current = c.share;
-        let raw = current / WIDTH_STEP;
-        // On the grid, step from there; off it (e.g. after a manual resize), the first
-        // step only snaps to the neighbouring grid line in the direction of travel.
-        let on_grid = (raw - raw.round()).abs() < 0.01;
-        let base = if on_grid { raw.round() } else if steps > 0 { raw.floor() } else { raw.ceil() };
-        let next = ((base + steps as f64) * WIDTH_STEP).clamp(MIN_SHARE, 1.0);
+        let mut next = current;
+        for _ in 0..steps.unsigned_abs() {
+            let found = if steps > 0 {
+                WIDTH_LADDER.iter().copied().find(|&s| s > next + 0.01)
+            } else {
+                WIDTH_LADDER.iter().rev().copied().find(|&s| s < next - 0.01)
+            };
+            match found {
+                Some(s) => next = s,
+                None => break,
+            }
+        }
         if (next - current).abs() <= 0.001 {
             return false;
         }
@@ -500,20 +508,23 @@ mod tests {
     fn width_steps_and_limits() {
         let mut s = plain(2);
         s.viewport = (1200.0, 800.0);
-        assert!(s.adjust_focused_width(1));
-        assert!(close(s.columns[0].share, 7.0 / 12.0));
-        assert!(s.adjust_focused_width(-2));
-        assert!(close(s.columns[0].share, 5.0 / 12.0));
+        assert!(s.adjust_focused_width(1)); // ½ → ⅔
+        assert!(close(s.columns[0].share, 2.0 / 3.0));
+        assert!(s.adjust_focused_width(-2)); // ⅔ → ½ → ⅓
+        assert!(close(s.columns[0].share, 1.0 / 3.0));
         s.columns[0].share = 1.0;
-        assert!(!s.adjust_focused_width(1));
+        assert!(!s.adjust_focused_width(1)); // no wrapping
         s.columns[0].share = 1.0 / 6.0;
         assert!(!s.adjust_focused_width(-1));
-        s.columns[0].share = 0.55;
+        s.columns[0].share = 0.55; // off the ladder: nearest size in that direction
         assert!(s.adjust_focused_width(1));
-        assert!(close(s.columns[0].share, 7.0 / 12.0));
+        assert!(close(s.columns[0].share, 2.0 / 3.0));
         s.columns[0].share = 0.55;
         assert!(s.adjust_focused_width(-1));
         assert!(close(s.columns[0].share, 0.5));
+        s.columns[0].share = 0.75;
+        assert!(s.adjust_focused_width(3)); // ¾ → ⅚ → full, then stops
+        assert!(close(s.columns[0].share, 1.0));
     }
 
     #[test]

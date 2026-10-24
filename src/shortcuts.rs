@@ -69,8 +69,8 @@ commands! {
     UnstackAll = "unstackAll", "Stacks & tabs", "Unstack all (every window its own column)";
     WidthNext = "widthNext", "Width & position", "Cycle width forward (⅓ → ½ → ⅔ → full)";
     WidthPrevious = "widthPrevious", "Width & position", "Cycle width back";
-    Narrower = "narrower", "Width & position", "Narrower (small step)";
-    Wider = "wider", "Width & position", "Wider (small step)";
+    Narrower = "narrower", "Width & position", "Narrower (next size down)";
+    Wider = "wider", "Width & position", "Wider (next size up)";
     FullWidth = "fullWidth", "Width & position", "Full width on / off";
     Center = "center", "Width & position", "Centre focused column";
     Column1 = "column1", "Jump", "Jump to column 1";
