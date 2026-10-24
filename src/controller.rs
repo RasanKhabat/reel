@@ -140,6 +140,10 @@ pub struct StripController {
     last_sized: HashMap<WinId, (f64, f64)>,
     /// Width animations: window → (spring over the width, final height).
     width_anim: HashMap<WinId, (Spring, f64)>,
+    /// Sizes an app settled on instead of the exact one asked for (Terminal snaps heights to
+    /// whole text rows): window → (size asked for, size it chose). Accepted until Reel asks
+    /// for a different size, so Reel doesn't keep "correcting" it.
+    settled: HashMap<WinId, (Size, Size)>,
     /// Experiment "pause enhanced UI": apps whose AXEnhancedUserInterface Reel turned off.
     eui_paused: HashSet<i32>,
 }
@@ -180,6 +184,7 @@ impl StripController {
             skip_ax: false,
             focus_pending: false,
             last_sized: HashMap::new(),
+            settled: HashMap::new(),
             width_anim: HashMap::new(),
             eui_paused: HashSet::new(),
         }
@@ -591,11 +596,17 @@ impl StripController {
         if (size.width - applied.0).abs() <= 2.0 {
             // Same width but a different height: the app changed it by itself (some do when
             // they come to the front). Heights belong to the layout, so put it back.
-            if (size.height - applied.1).abs() > 1.0 {
+            let own_choice = self.settled.get(&id).is_some_and(|(_, got)| close(*got, (size.width, size.height)));
+            if (size.height - applied.1).abs() > 1.0 && !own_choice {
                 if let (Some(win), Some(&(x, y))) = (self.wins.get(&id), self.last_pushed.get(&id)) {
                     win.el.set_position(x, y);
                     win.el.set_size(applied.0, applied.1);
                     crate::log::write(&format!("  restored the height of \"{}\" ({} → {})", win.title(), size.height, applied.1));
+                    if let Some(got) = win.el.size() {
+                        if !close((got.width, got.height), applied) {
+                            self.settled.insert(id, (applied, (got.width, got.height)));
+                        }
+                    }
                 }
             }
             return;
@@ -741,6 +752,9 @@ impl StripController {
                     if self.applied.get(id) == Some(&(w, rh)) {
                         continue;
                     }
+                    if self.settled.get(id).is_some_and(|(asked, got)| close(*asked, (w, rh)) && self.applied.get(id).is_some_and(|a| close(*a, *got))) {
+                        continue; // the app already chose its own size for this request
+                    }
                     // Experiment "live resizing": a width-only change animates instead of
                     // jumping (see `push_frame` and `finish_width_anims`).
                     if let Some(&(aw, ah)) = self.applied.get(id) {
@@ -757,7 +771,17 @@ impl StripController {
                     let Some(win) = self.wins.get(id) else { continue };
                     // Move to the new row's top edge *before* resizing: macOS caps a
                     // window's height to the space below its current origin.
-                    let x = self.last_pushed.get(id).map(|p| p.0).or_else(|| win.el.position().map(|p| p.x)).unwrap_or(usable.x).round();
+                    let mut x = self.last_pushed.get(id).map(|p| p.0).or_else(|| win.el.position().map(|p| p.x)).unwrap_or(usable.x).round();
+                    // It caps the width to the room on the right as well, so a visible window
+                    // that's growing near the right edge (e.g. the last column) slides left
+                    // just enough first. Its glide continues from there.
+                    let visible = x < usable.max_x() - PEEK - 1.0 && x + w > usable.x + PEEK + 1.0;
+                    if visible && x + w > usable.max_x() {
+                        x = (usable.max_x() - w).max(usable.x).round();
+                        if let Some(sp) = self.column_x.get_mut(&col.id) {
+                            sp.value = x - usable.x + self.offset.value;
+                        }
+                    }
                     let y = (usable.y + ry).round();
                     win.el.set_position(x, y);
                     self.last_pushed.insert(*id, (x, y));
@@ -769,6 +793,11 @@ impl StripController {
                     }
                     // Record what was accepted so a shortfall is retried next time.
                     self.applied.insert(*id, (got.0, if (got.1 - rh).abs() <= 1.0 { rh } else { got.1 }));
+                    if close(got, (w, rh)) {
+                        self.settled.remove(id);
+                    } else {
+                        self.settled.insert(*id, ((w, rh), got));
+                    }
                     if (got.0 - w).abs() > 1.0 {
                         accepted = Some(accepted.unwrap_or(0.0).max(got.0));
                     }
@@ -936,12 +965,20 @@ impl StripController {
                 let Some(win) = self.wins.get(id) else { continue };
                 let Some(frame) = win.el.frame() else { continue };
                 let want_w = self.applied.get(id).map(|a| a.0).unwrap_or(w);
-                if (frame.h - rh).abs() <= 1.0 && (frame.w - want_w).abs() <= 1.0 && (frame.x - px).abs() <= 1.0 && (frame.y - py).abs() <= 1.0 {
+                let in_place = (frame.x - px).abs() <= 1.0 && (frame.y - py).abs() <= 1.0;
+                let exact = (frame.h - rh).abs() <= 1.0 && (frame.w - want_w).abs() <= 1.0;
+                let own_choice = self.settled.get(id).is_some_and(|(asked, got)| close(*asked, (want_w, rh)) && close(*got, (frame.w, frame.h)));
+                if in_place && (exact || own_choice) {
                     continue;
                 }
                 let y = (area.y + ry).round();
                 win.el.set_position(px, y);
                 win.el.set_size(want_w, rh);
+                if let Some(got) = win.el.size() {
+                    if !close((got.width, got.height), (want_w, rh)) {
+                        self.settled.insert(*id, ((want_w, rh), (got.width, got.height)));
+                    }
+                }
                 fixed += 1;
             }
         }
@@ -1084,6 +1121,7 @@ impl StripController {
     fn forget(&mut self, id: WinId) {
         self.width_anim.remove(&id);
         self.last_sized.remove(&id);
+        self.settled.remove(&id);
         self.wins.remove(&id);
         self.applied.remove(&id);
         self.row_y.remove(&id);
@@ -1131,4 +1169,12 @@ pub fn beep() {
 
 fn reduce_motion() -> bool {
     objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
+/// Width and height.
+type Size = (f64, f64);
+
+/// Two sizes the same to within a point.
+fn close(a: Size, b: Size) -> bool {
+    (a.0 - b.0).abs() <= 1.0 && (a.1 - b.1).abs() <= 1.0
 }

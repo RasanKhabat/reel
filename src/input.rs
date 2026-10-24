@@ -28,6 +28,7 @@ pub enum Input {
     ScrollEnd(f64),
     /// A notch of a mouse wheel (no begin/end phases).
     WheelDelta { x: f64, y: f64, delta: f64 },
+    MinimizeSafari,
 }
 
 /// Where input events go (set once by the app).
@@ -58,6 +59,7 @@ struct HotKeyState {
 }
 
 const SIGNATURE: u32 = u32::from_be_bytes(*b"REEL");
+const FIXED_SIGNATURE: u32 = u32::from_be_bytes(*b"REXT");
 
 extern "C" fn hotkey_handler(_call: *const c_void, event: *const c_void, _user: *mut c_void) -> OSStatus {
     let mut hk = EventHotKeyID::default();
@@ -65,11 +67,41 @@ extern "C" fn hotkey_handler(_call: *const c_void, event: *const c_void, _user: 
         GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, std::ptr::null_mut(),
                           std::mem::size_of::<EventHotKeyID>(), std::ptr::null_mut(), &mut hk as *mut _ as *mut c_void);
     }
+    if hk.signature == FIXED_SIGNATURE {
+        send(Input::MinimizeSafari);
+        return 0;
+    }
     let cmd = HOTKEYS.with(|h| h.borrow().actions.get(&hk.id).copied());
     if let Some(c) = cmd {
         send(Input::Shortcut(c));
     }
     0
+}
+
+fn ensure_handler(h: &mut HotKeyState) {
+    if !h.handler_installed {
+        let spec = EventTypeSpec { event_class: kEventClassKeyboard, event_kind: kEventHotKeyPressed };
+        unsafe {
+            InstallEventHandler(GetApplicationEventTarget(), hotkey_handler, 1, &spec, std::ptr::null_mut(), std::ptr::null_mut());
+        }
+        h.handler_installed = true;
+    }
+}
+
+/// ⌘⇧↓, registered once for the whole run (not part of the keymap).
+pub fn install_fixed() {
+    HOTKEYS.with(|h| {
+        let mut h = h.borrow_mut();
+        ensure_handler(&mut h);
+        let mut out: *const c_void = std::ptr::null();
+        let status = unsafe {
+            RegisterEventHotKey(crate::shortcuts::key::DOWN, CMD | SHIFT, EventHotKeyID { signature: FIXED_SIGNATURE, id: 1 },
+                                GetApplicationEventTarget(), 0, &mut out)
+        };
+        if status != 0 {
+            crate::log::write(&format!("fixed hotkey refused (status {status})"));
+        }
+    });
 }
 
 /// Registers the keymap. Returns the combos nobody could take (shown in the menu).
@@ -79,13 +111,7 @@ pub fn install(bindings: &HashMap<Command, Combo>) -> Vec<Combo> {
     let mut failed = vec![];
     HOTKEYS.with(|h| {
         let mut h = h.borrow_mut();
-        unsafe {
-            if !h.handler_installed {
-                let spec = EventTypeSpec { event_class: kEventClassKeyboard, event_kind: kEventHotKeyPressed };
-                InstallEventHandler(GetApplicationEventTarget(), hotkey_handler, 1, &spec, std::ptr::null_mut(), std::ptr::null_mut());
-                h.handler_installed = true;
-            }
-        }
+        ensure_handler(&mut h);
         let mut list: Vec<(&Command, &Combo)> = bindings.iter().collect();
         list.sort_by_key(|(c, _)| **c);
         for (cmd, combo) in list {

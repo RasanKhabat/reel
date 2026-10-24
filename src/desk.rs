@@ -340,6 +340,7 @@ impl Desk {
                 crate::close_menu();
                 self.perform(c);
             }
+            Input::MinimizeSafari => crate::apps::minimize_front_window("com.apple.Safari"),
             Input::ScrollBegin { x, y } => self.begin_drag(x, y),
             Input::ScrollDelta(dx) => self.drag(dx),
             Input::ScrollEnd(v) => self.end_drag(v),

@@ -37,7 +37,7 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDidChangeScreenParametersNotification,
     NSApplicationWillTerminateNotification, NSEvent, NSWorkspace,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL};
+use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::ptr::NonNull;
@@ -58,6 +58,8 @@ thread_local! {
     static DESK: RefCell<Option<Desk>> = const { RefCell::new(None) };
     static MOVER: RefCell<Mover> = RefCell::new(Mover::default());
     static SCREEN_GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// A display change arrived while the screen was locked.
+    static SCREEN_PENDING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn mtm() -> MainThreadMarker {
@@ -200,6 +202,36 @@ fn did_become_trusted() {
     }
 }
 
+/// Whether the login session's screen is locked.
+pub fn screen_locked() -> bool {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::string::CFString;
+    let raw = unsafe { ffi::CGSessionCopyCurrentDictionary() };
+    if raw.is_null() {
+        return false;
+    }
+    let d: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_create_rule(raw) };
+    d.find(CFString::from_static_string("CGSSessionScreenIsLocked"))
+        .and_then(|v| v.downcast::<CFBoolean>())
+        .map(bool::from)
+        .unwrap_or(false)
+}
+
+/// Applies a display change that arrived while locked, once the screen really is unlocked
+/// (the "unlocked" notice can come early), checking again every 2 s until then.
+fn apply_display_change_when_unlocked(delay: f64) {
+    later(delay, |d| {
+        if screen_locked() {
+            apply_display_change_when_unlocked(2.0);
+            return;
+        }
+        d.screens_changed();
+        ensure_clock();
+    });
+}
+
 fn observe_app_notifications() {
     let center = NSNotificationCenter::defaultCenter();
     let queue = NSOperationQueue::mainQueue();
@@ -211,18 +243,35 @@ fn observe_app_notifications() {
         });
         later(0.6, move |d| {
             if SCREEN_GENERATION.with(|g| g.get()) == generation {
+                // While the screen is locked macOS hides every window from Accessibility, so
+                // rebuilding now would drop them all. Catch up after unlocking instead.
+                if screen_locked() {
+                    SCREEN_PENDING.with(|p| p.set(true));
+                    log::write("displays changed while the screen is locked; waiting for unlock");
+                    return;
+                }
                 d.screens_changed();
                 ensure_clock();
             }
         });
     });
+    let unlocked = RcBlock::new(|_: NonNull<NSNotification>| {
+        if SCREEN_PENDING.with(|p| p.replace(false)) {
+            log::write("screen unlocked; applying the display change");
+            // Give windows a moment to reappear to Accessibility.
+            apply_display_change_when_unlocked(1.0);
+        }
+    });
     let terminate = RcBlock::new(|_: NonNull<NSNotification>| quit());
     unsafe {
         let a = center.addObserverForName_object_queue_usingBlock(Some(NSApplicationDidChangeScreenParametersNotification), None, Some(&queue), &screens);
         let b = center.addObserverForName_object_queue_usingBlock(Some(NSApplicationWillTerminateNotification), None, Some(&queue), &terminate);
+        let c = NSDistributedNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(&NSString::from_str("com.apple.screenIsUnlocked")), None, Some(&queue), &unlocked);
         // Observers live for the whole run.
         std::mem::forget(a);
         std::mem::forget(b);
+        std::mem::forget(c);
     }
 }
 
@@ -243,6 +292,9 @@ fn main() {
     watchdog::start();
     if !test_mode::is_on() {
         panel::install();
+        if prefs::bool("fixedHotkey") {
+            input::install_fixed();
+        }
     }
     let trusted = ax::is_trusted();
     log::write(&format!(

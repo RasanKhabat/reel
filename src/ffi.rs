@@ -236,3 +236,9 @@ pub fn string_from_cf(s: CFStringRef) -> Option<String> {
         Some(String::from_utf8_lossy(&buf[..end]).into_owned())
     }
 }
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    /// The login session's properties (e.g. whether the screen is locked).
+    pub fn CGSessionCopyCurrentDictionary() -> core_foundation::dictionary::CFDictionaryRef;
+}
