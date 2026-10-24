@@ -205,33 +205,34 @@ pub fn key_name(code: u32) -> (String, String) {
     }
 }
 
-/// Built-in keymaps, plus the user's own.
+/// The built-in keymap (⇧ arrows), or the user's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preset {
-    CtrlOpt,
     Shift,
     Custom,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 3] = [Preset::CtrlOpt, Preset::Shift, Preset::Custom];
+    pub const ALL: [Preset; 2] = [Preset::Shift, Preset::Custom];
     pub fn raw(self) -> &'static str {
-        match self { Preset::CtrlOpt => "ctrlOpt", Preset::Shift => "shift", Preset::Custom => "custom" }
+        match self { Preset::Shift => "shift", Preset::Custom => "custom" }
     }
     pub fn from_raw(s: &str) -> Option<Preset> {
-        Self::ALL.into_iter().find(|p| p.raw() == s)
+        match s {
+            // The ⌃⌥-arrows layout was retired; people who had it get the default.
+            "ctrlOpt" => Some(Preset::Shift),
+            _ => Self::ALL.into_iter().find(|p| p.raw() == s),
+        }
     }
     pub fn label(self) -> &'static str {
-        match self { Preset::CtrlOpt => "⌃⌥ Arrows", Preset::Shift => "⇧ Arrows", Preset::Custom => "Custom" }
+        match self { Preset::Shift => "⇧ Arrows", Preset::Custom => "Custom" }
     }
 
-    /// The two built-in presets differ only in the arrow keys; letter and bracket commands
-    /// use ⌃⌥ in both, because ⇧+letter / ⇧+bracket is ordinary typing.
+    /// The default keymap: ⇧ + arrows to focus, ⌥⇧ + arrows to move. Letter, number and
+    /// bracket commands use ⌃⌥, because ⇧ + letter / ⇧ + bracket is ordinary typing.
     pub fn bindings(self) -> HashMap<Command, Combo> {
         use Command::*;
-        let shift = self == Preset::Shift;
-        let focus = if shift { SHIFT } else { CTRL_OPT };
-        let mv = if shift { SHIFT_OPT } else { CTRL_OPT_SHIFT };
+        let (focus, mv) = (SHIFT, SHIFT_OPT);
         let (co, cos) = (CTRL_OPT, CTRL_OPT_SHIFT);
         let k = Combo::new;
         let mut b = HashMap::from([
@@ -264,23 +265,21 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn presets_cover_everything_without_clashes() {
-        for p in [Preset::CtrlOpt, Preset::Shift] {
-            let b = p.bindings();
-            assert_eq!(b.len(), Command::ALL.len());
-            let uniq: HashSet<_> = b.values().collect();
-            assert_eq!(uniq.len(), b.len(), "{p:?} binds a combo twice");
-            assert!(b.values().all(|c| c.problem().is_none()));
-        }
+    fn default_covers_everything_without_clashes() {
+        let b = Preset::Shift.bindings();
+        assert_eq!(b.len(), Command::ALL.len());
+        let uniq: HashSet<_> = b.values().collect();
+        assert_eq!(uniq.len(), b.len(), "a combo is bound twice");
+        assert!(b.values().all(|c| c.problem().is_none()));
     }
 
     #[test]
-    fn presets_differ_only_in_arrows() {
-        let (a, s) = (Preset::CtrlOpt.bindings(), Preset::Shift.bindings());
+    fn default_layout() {
+        let s = Preset::Shift.bindings();
         assert_eq!(s[&Command::FocusLeft].glyphs(), "⇧←");
         assert_eq!(s[&Command::MoveRight].glyphs(), "⌥⇧→");
-        assert_eq!(a[&Command::FocusLeft].glyphs(), "⌃⌥←");
-        assert_eq!(a[&Command::StackLeft], s[&Command::StackLeft]);
+        assert_eq!(s[&Command::StackLeft].glyphs(), "⌃⌥[");
+        assert_eq!(Preset::from_raw("ctrlOpt"), Some(Preset::Shift), "the retired layout maps to the default");
     }
 
     #[test]

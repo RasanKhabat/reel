@@ -71,7 +71,7 @@ struct PanelState: Decodable {
     var swipeAvailable = true
     var hasStacks = false
     var unstackKeys: String? = nil
-    var preset = "ctrlOpt"
+    var preset = "shift"
     var scrollModifier = "ctrlOpt"
     var scrollSpelled = ""
     var scrollCaveat: String? = nil
@@ -206,7 +206,7 @@ final class PanelModel: ObservableObject {
 struct PanelView: View {
     static let size = NSSize(width: 400, height: 520)
 
-    static let presets = [("ctrlOpt", "⌃⌥ arrows"), ("shift", "⇧ arrows"), ("custom", "Customize")]
+    static let presets = [("shift", "⇧ arrows"), ("custom", "Customize")]
     static let modifiers = [("ctrlOpt", "⌃⌥"), ("shift", "⇧"), ("option", "⌥"), ("command", "⌘"), ("control", "⌃")]
     static let overviews = [("auto", "On change"), ("always", "Always"), ("off", "Off")]
 

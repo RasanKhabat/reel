@@ -122,20 +122,10 @@ fn build(mtm: MainThreadMarker) {
         }
     }
 
-    let reset_ctrl = Target::new(mtm, |_: &AnyObject| crate::ffi::main_async(|| reset(Preset::CtrlOpt)));
-    let reset_shift = Target::new(mtm, |_: &AnyObject| crate::ffi::main_async(|| reset(Preset::Shift)));
-    let resets = stack(
-        &[
-            Retained::into_super(Retained::into_super(label("Reset everything to:", 12.0, false))),
-            Retained::into_super(Retained::into_super(button("⌃⌥ Arrows layout", &reset_ctrl))),
-            Retained::into_super(Retained::into_super(button("⇧ Arrows layout", &reset_shift))),
-        ],
-        false,
-        8.0,
-    );
+    let reset_default = Target::new(mtm, |_: &AnyObject| crate::ffi::main_async(|| reset(Preset::Shift)));
+    let resets = stack(&[Retained::into_super(Retained::into_super(button("Reset to the default shortcuts", &reset_default)))], false, 8.0);
     rows.push(Retained::into_super(resets));
-    targets.push(reset_ctrl);
-    targets.push(reset_shift);
+    targets.push(reset_default);
 
     let content = stack(&rows, true, 6.0);
     content.setEdgeInsets(NSEdgeInsets { top: 16.0, left: 18.0, bottom: 16.0, right: 18.0 });
@@ -264,7 +254,7 @@ fn handle(event: &NSEvent) -> bool {
 fn reset(p: Preset) {
     stop_recording();
     crate::with_desk(move |d| d.reset_custom_bindings(p));
-    say(&format!("Reset to the {} layout.", p.label()));
+    say(&format!("Reset to the default ({}) shortcuts.", p.label()));
     crate::ffi::main_async(refresh);
 }
 

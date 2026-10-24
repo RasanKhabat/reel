@@ -276,3 +276,14 @@ Files: `Strip.swift` (pure model), `StripController.swift` (one display), `Desk.
   pictures before the real windows were back in place.
 - Testing caveat: with the screen locked, Accessibility sees no windows (the runner now says
   so and stops) and codesign can't reach the keychain.
+
+## 0.4.0 (Oct 25)
+- One built-in keymap: ⇧ arrows (focus) / ⌥⇧ arrows (move) / ⌃⌥ for everything else. The
+  ⌃⌥-arrows layout was removed; a saved `keymapPreset = ctrlOpt` maps to it. Custom stays.
+- ⌃⌥ -/= step through ⅙ ¼ ⅓ ½ ⅔ ¾ ⅚ full (no wrap) instead of 1/12 nudges.
+- A growing window near the right edge slides left first: macOS caps a window's width to
+  the room on its right, which made the last column barely grow.
+- Display changes while the screen is locked wait for a real unlock (Accessibility sees no
+  windows while locked). Sizes an app chooses itself (Terminal's row-snapped heights) are
+  accepted instead of re-corrected after every move.
+- "Animate window moves" switch (off = instant moves); reopening Reel shows its panel.

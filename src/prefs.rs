@@ -55,8 +55,7 @@ pub fn preset() -> Preset {
     if let Some(p) = string("keymapPreset").as_deref().and_then(Preset::from_raw) {
         return p;
     }
-    // Earliest versions stored only the arrow choice.
-    if string("arrowKeys").as_deref() == Some("ctrlOpt") { Preset::CtrlOpt } else { Preset::Shift }
+    Preset::Shift
 }
 
 pub fn set_preset(p: Preset) {
