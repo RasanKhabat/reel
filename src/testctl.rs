@@ -55,6 +55,8 @@ fn run(command: String, id: String) {
             return;
         }
         "dump" => {}
+        "animations:on" => crate::spring::set_animations_on(true),
+        "animations:off" => crate::spring::set_animations_on(false),
         // exp:<key>:on|off switches one animation experiment for this test instance.
         c if c.starts_with("exp:") => {
             let mut parts = c.split(':').skip(1);

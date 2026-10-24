@@ -48,6 +48,7 @@ impl Desk {
             scroll_modifier: prefs::scroll_modifier(),
             scroll_speed: {
                 crate::spring::set_speed(prefs::animation_speed());
+                crate::spring::set_animations_on(!prefs::bool("animationsOff"));
                 prefs::scroll_speed()
             },
             overview_mode: prefs::overview_mode(),
@@ -548,6 +549,12 @@ impl Desk {
     pub fn set_scroll_speed(&mut self, v: f64) {
         self.scroll_speed = v;
         prefs::set_double("scrollSpeed", v);
+    }
+
+    /// Animations on or off. Off: windows jump straight to their places.
+    pub fn set_animations_on(&mut self, on: bool) {
+        crate::spring::set_animations_on(on);
+        prefs::set_bool("animationsOff", !on);
     }
 
     /// How fast windows glide (1 = the web demo's feel). Applies to moves in progress too.

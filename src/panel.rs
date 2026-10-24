@@ -100,6 +100,7 @@ fn read() -> Option<Value> {
             "scrollCaveat": d.scroll_modifier.caveat(),
             "scrollSpeed": d.scroll_speed,
             "animationSpeed": crate::spring::speed(),
+            "animations": crate::spring::animations_on(),
             "experiments": crate::experiments::Exp::ALL.iter().map(|e| json!({
                 "key": e.key(), "title": e.title(), "detail": e.detail(),
                 "on": crate::experiments::on(*e),
@@ -155,6 +156,7 @@ fn perform(name: &str, value: &str) {
                 }
             }
         }
+        "animations" => crate::with_desk(move |d| d.set_animations_on(on)),
         "animationSpeed" => {
             if let Ok(v) = value.parse::<f64>() {
                 crate::with_desk(move |d| d.set_animation_speed(v));

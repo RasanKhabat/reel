@@ -21,6 +21,17 @@ pub fn speed() -> f64 {
     f64::from_bits(SPEED.load(Ordering::Relaxed))
 }
 
+/// Whether windows glide at all. Off: every move is instant (like macOS's Reduce Motion).
+static ANIMATIONS_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn animations_on() -> bool {
+    !ANIMATIONS_OFF.load(Ordering::Relaxed)
+}
+
+pub fn set_animations_on(on: bool) {
+    ANIMATIONS_OFF.store(!on, Ordering::Relaxed);
+}
+
 pub fn set_speed(v: f64) {
     SPEED.store(v.clamp(0.25, 4.0).to_bits(), Ordering::Relaxed);
 }

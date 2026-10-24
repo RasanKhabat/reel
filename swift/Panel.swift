@@ -77,6 +77,7 @@ struct PanelState: Decodable {
     var scrollCaveat: String? = nil
     var scrollSpeed = 2.0
     var animationSpeed = 1.0
+    var animations = true
     var experiments: [Experiment] = []
     var overview = "auto"
     var border = false
@@ -115,13 +116,24 @@ final class PanelController: NSObject {
         popover.delegate = self
         model.close = { [weak self] in self?.close() }
         // Opening Reel again (Finder, Spotlight, `open`) while it runs shows the panel, since
-        // a menu bar icon is easy to lose behind the notch.
+        // a menu bar icon is easy to lose behind the notch. AppKit installs its own handler for
+        // this event when launching finishes, so register again after that.
+        installReopenHandler()
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.installReopenHandler() }
+        }
+    }
+
+    private func installReopenHandler() {
         NSAppleEventManager.shared().setEventHandler(
             self, andSelector: #selector(reopen(_:reply:)),
             forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEReopenApplication))
     }
 
     @objc private func reopen(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        NSLog("Reel: reopened; showing the panel")
         show()
     }
 
@@ -270,12 +282,15 @@ struct PanelView: View {
                                   set: { model.send("scrollSpeed", String(($0 * 4).rounded() / 4)) }), in: 1...4)
             Text(String(format: "%.2g×", s.scrollSpeed)).font(.caption).monospacedDigit().frame(width: 36, alignment: .trailing)
         }
+        Toggle("Animate window moves", isOn: model.binding({ $0.animations }, "animations"))
+            .toggleStyle(.checkbox)
         HStack {
             Text("Animation speed").font(.caption)
             Slider(value: Binding(get: { s.animationSpeed },
                                   set: { model.send("animationSpeed", String(($0 * 4).rounded() / 4)) }), in: 0.5...2.5)
             Text(String(format: "%.2g×", s.animationSpeed)).font(.caption).monospacedDigit().frame(width: 36, alignment: .trailing)
         }
+        .disabled(!s.animations)
         DisclosureGroup("Animation experiments", isExpanded: $showExperiments) {
             ScrollView { experimentList }.frame(maxHeight: 210)
         }

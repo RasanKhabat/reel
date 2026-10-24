@@ -663,6 +663,9 @@ impl StripController {
         let rest = self.strip.resting_offset(self.offset.target + v * 0.2);
         self.strip.offset = rest;
         self.offset.target = rest;
+        if reduce_motion() {
+            self.offset.snap(); // no glide after letting go
+        }
         // If the focused column ended up off screen, focus the first fully visible one.
         if let Some(col) = self.strip.focused_column() {
             let x = self.strip.column_edges().0[self.strip.focus];
@@ -1167,8 +1170,10 @@ pub fn beep() {
     objc2_app_kit::NSBeep();
 }
 
+/// Moves are instant when the user turned animations off in Reel or asked macOS to reduce
+/// motion.
 fn reduce_motion() -> bool {
-    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+    !crate::spring::animations_on() || objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
 }
 
 /// Width and height.
