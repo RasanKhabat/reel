@@ -613,8 +613,26 @@ impl StripController {
         }
         self.strip.columns[c].accepted_width = Some(size.width);
         self.applied.insert(id, (size.width, applied.1));
-        self.strip.scroll_focus_into_view();
-        self.commit(true, true);
+        // While the user drags an edge (mouse button down), gliding would move the window under
+        // the mouse, which made dragging the left edge jumpy. Keep the window's left edge where
+        // the user has it (scrolling the strip under it if needed) and apply the rest at once.
+        // Other size changes (apps, macOS adjusting a frame) are absorbed by a normal glide.
+        let mouse_down = objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0;
+        let area = self.usable();
+        let edges = self.strip.column_edges().0;
+        match (mouse_down, el.position(), edges.get(c)) {
+            (true, Some(p), Some(&cx)) => {
+                self.strip.offset = (cx - (p.x - area.x)).clamp(0.0, self.strip.max_offset());
+                if let Some(entry) = self.last_pushed.get_mut(&id) {
+                    entry.0 = p.x.round();
+                }
+                self.commit(false, false);
+            }
+            _ => {
+                self.strip.scroll_focus_into_view();
+                self.commit(true, true);
+            }
+        }
     }
 
     /// An app quit: drop all of its windows at once.
