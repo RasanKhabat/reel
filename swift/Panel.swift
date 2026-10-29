@@ -146,10 +146,17 @@ final class PanelController: NSObject {
     func show() {
         guard !popover.isShown, let button = statusItem.button else { return }
         NSApp.activate(ignoringOtherApps: true)
-        model.bridge.send("refreshWindows")
         model.reload()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        // The window list asks every app, which can be slow; open first, and only fetch it
+        // for the view that shows it (tiling off).
+        if !model.s.tiling {
+            DispatchQueue.main.async { [weak self] in
+                self?.model.bridge.send("refreshWindows")
+                self?.model.reload()
+            }
+        }
         // Keep the column list live while the panel is open.
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.reload() }

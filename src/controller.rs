@@ -59,7 +59,9 @@ impl Win {
 
     /// Brings the window forward and gives it keyboard focus.
     pub fn focus(&self) {
-        Element::application(self.pid).set_bool(ax::FRONTMOST, true);
+        let app = Element::application(self.pid);
+        app.set_timeout(0.3);
+        app.set_bool(ax::FRONTMOST, true);
         self.el.set_bool(ax::MAIN, true);
         self.el.perform(ax::RAISE);
     }

@@ -280,6 +280,10 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
+    // Accessibility calls wait 6 s for an answer by default, and they run on the main
+    // thread: one busy app froze keys and the menu. Set on the system-wide element, this
+    // is the default for every element Reel creates.
+    ax::Element::system_wide().set_timeout(0.5);
     experiments::load();
     DESK.with(|d| *d.borrow_mut() = Some(Desk::new(mtm)));
     input::set_sink(|i| with_desk(move |d| d.input(i)));
