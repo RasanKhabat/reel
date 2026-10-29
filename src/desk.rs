@@ -300,10 +300,16 @@ impl Desk {
             return;
         }
         let app = Element::application(pid);
+        let named_window = window.is_some();
         let el = window.or_else(|| app.element(ax::FOCUSED_WINDOW)).or_else(|| app.element(ax::MAIN_WINDOW));
         if let Some(el) = &el {
-            if let Some(s) = self.strips.iter_mut().find(|s| s.contains(el)) {
-                s.follow_system_focus(el);
+            if let Some(i) = self.strips.iter().position(|s| s.contains(el)) {
+                // Switching to a window brings them back from "show desktop". Clicking the
+                // desktop itself only activates Finder, which mustn't count.
+                if named_window || crate::apps::info(pid).bundle_id.as_deref() != Some("com.apple.finder") {
+                    self.bring_back_from_desktop();
+                }
+                self.strips[i].follow_system_focus(el);
                 return;
             }
         }
@@ -404,6 +410,11 @@ impl Desk {
         if !self.is_tiling {
             return crate::log::write("  ignored: tiling is off");
         }
+        if c == Command::ShowDesktop {
+            return self.toggle_desktop();
+        }
+        // Any other command brings the windows back first.
+        self.bring_back_from_desktop();
         let Some(i) = self.active_strip() else { return crate::log::write("  ignored: no strip") };
         let s = &mut self.strips[i];
         use Command::*;
@@ -436,6 +447,28 @@ impl Desk {
             }
         }
         crate::ensure_clock();
+    }
+
+    /// Show desktop: every strip's windows part to the screen edges; again brings them back.
+    pub fn toggle_desktop(&mut self) {
+        let show = !self.strips.iter().any(|s| s.desktop_shown());
+        for s in &mut self.strips {
+            s.set_desktop(show);
+        }
+        crate::ensure_clock();
+    }
+
+    pub fn desktop_shown(&self) -> bool {
+        self.strips.iter().any(|s| s.desktop_shown())
+    }
+
+    fn bring_back_from_desktop(&mut self) {
+        if self.desktop_shown() {
+            for s in &mut self.strips {
+                s.set_desktop(false);
+            }
+            crate::ensure_clock();
+        }
     }
 
     pub fn unstack_all(&mut self) {

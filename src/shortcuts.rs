@@ -73,6 +73,7 @@ commands! {
     Wider = "wider", "Width & position", "Wider (next size up)";
     FullWidth = "fullWidth", "Width & position", "Full width on / off";
     Center = "center", "Width & position", "Centre focused column";
+    ShowDesktop = "showDesktop", "Width & position", "Show desktop (again to bring windows back)";
     Column1 = "column1", "Jump", "Jump to column 1";
     Column2 = "column2", "Jump", "Jump to column 2";
     Column3 = "column3", "Jump", "Jump to column 3";
@@ -246,6 +247,7 @@ impl Preset {
             (WidthNext, k(key::R, co)), (WidthPrevious, k(key::R, cos)),
             (Narrower, k(key::MINUS, co)), (Wider, k(key::EQUAL, co)),
             (FullWidth, k(key::F, co)), (Center, k(key::C, co)),
+            (ShowDesktop, k(key::D, co)),
             (LastColumn, k(key::N0, co)),
             (FocusDisplayLeft, k(key::COMMA, co)), (FocusDisplayRight, k(key::PERIOD, co)),
             (SendToDisplayLeft, k(key::COMMA, cos)), (SendToDisplayRight, k(key::PERIOD, cos)),

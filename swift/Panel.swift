@@ -70,6 +70,8 @@ struct PanelState: Decodable {
     var launchAtLogin = false
     var swipeAvailable = true
     var hasStacks = false
+    var desktopShown = false
+    var desktopKeys: String? = nil
     var unstackKeys: String? = nil
     var preset = "shift"
     var scrollModifier = "ctrlOpt"
@@ -230,6 +232,9 @@ struct PanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         if s.tiling {
+                            Button((s.desktopShown ? "Bring windows back" : "Show desktop") + (s.desktopKeys.map { " (\($0))" } ?? "")) {
+                                model.send("showDesktop")
+                            }
                             settingsSection
                             if s.hasStacks {
                                 Button("Unstack all" + (s.unstackKeys.map { " (\($0))" } ?? "")) { model.send("unstackAll") }

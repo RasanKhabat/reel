@@ -92,6 +92,8 @@ fn read() -> Option<Value> {
             "tiling": d.is_tiling,
             "launchAtLogin": crate::login_item::is_enabled(),
             "swipeAvailable": !d.is_tiling || d.swipe_available,
+            "desktopShown": d.desktop_shown(),
+            "desktopKeys": bindings.get(&Command::ShowDesktop).map(|k| k.glyphs()),
             "hasStacks": d.strips.iter().any(|s| s.strip.columns.iter().any(|c| c.windows.len() > 1)),
             "unstackKeys": bindings.get(&Command::UnstackAll).map(|k| k.glyphs()),
             "preset": d.preset.raw(),
@@ -181,6 +183,10 @@ fn perform(name: &str, value: &str) {
             }
         }
         "unstackAll" => crate::with_desk(|d| d.unstack_all()),
+        "showDesktop" => {
+            close();
+            crate::with_desk(|d| d.toggle_desktop());
+        }
         "rescue" => {
             crate::with_desk(|d| {
                 d.rescue_offscreen_windows();

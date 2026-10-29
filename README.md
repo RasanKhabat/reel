@@ -141,6 +141,7 @@ If you need that, give those actions other keys (see [Your own shortcuts](#your-
 | Jump to column 1 … 9 | ⌃ Control + ⌥ Option + 1 … 9 |
 | Jump to the last column | ⌃ Control + ⌥ Option + 0 |
 | Centre the focused column on screen | ⌃ Control + ⌥ Option + C |
+| Show the desktop (press again, or switch to a window, to bring them back) | ⌃ Control + ⌥ Option + D |
 
 **Width**
 
@@ -212,6 +213,9 @@ shortcuts are kept for next time you choose Customize.
 - **Following focus**: picking a window through Spotlight, Mission Control, the Dock or
   ⌘ Command + Tab scrolls the strip to it.
 - **Stacks and tabs**: several windows can share a column, split top to bottom or as tabs.
+- **Show desktop** (⌃⌥ D, or the button in the panel): your windows slide off to the screen
+  edges so you can use the desktop; press it again, use any Reel shortcut or switch to a
+  window to bring them back.
 - **Overview**: a small map above the Dock shows every column, the focused window and which
   part of the strip is on screen. Click a block to jump there. Choose when it appears
   (*On change*, *Always*, *Off*) in the panel.

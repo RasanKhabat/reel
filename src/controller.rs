@@ -112,6 +112,8 @@ pub struct StripController {
     on_overlay: OverlayAction,
 
     offset: Spring,
+    /// "Show desktop": 0 = windows in place, 1 = slid off to the screen edges.
+    desktop: Spring,
     column_x: HashMap<ColId, Spring>,
     applied: HashMap<WinId, (f64, f64)>,
     row_y: HashMap<WinId, f64>,
@@ -163,6 +165,7 @@ impl StripController {
             dim_inactive: false,
             on_overlay,
             offset: Spring::new(0.0, SCROLL_OMEGA),
+            desktop: Spring::new(0.0, COLUMN_OMEGA),
             column_x: HashMap::new(),
             applied: HashMap::new(),
             row_y: HashMap::new(),
@@ -907,10 +910,25 @@ impl StripController {
         self.last_overview_offset = self.offset.value;
     }
 
+    /// Shows the desktop (windows part to the screen edges like curtains) or brings the
+    /// windows back.
+    pub fn set_desktop(&mut self, show: bool) {
+        self.desktop.target = if show { 1.0 } else { 0.0 };
+        if reduce_motion() {
+            self.desktop.snap();
+        }
+        self.start_animating();
+    }
+
+    pub fn desktop_shown(&self) -> bool {
+        self.desktop.target > 0.5
+    }
+
     /// One animation frame. Returns whether anything is still moving.
     pub fn tick(&mut self, dt: f64) -> bool {
         self.offset.advance(dt);
-        let mut settled = self.offset.is_settled();
+        self.desktop.advance(dt);
+        let mut settled = self.offset.is_settled() && self.desktop.is_settled();
         for s in self.column_x.values_mut() {
             s.advance(dt);
             settled &= s.is_settled();
@@ -1038,7 +1056,13 @@ impl StripController {
         for col in &self.strip.columns {
             let Some(sx) = self.column_x.get(&col.id) else { continue };
             let w = self.strip.width(col);
-            let (x, hidden) = self.park(area.x + sx.value - self.offset.value, w, area);
+            let mut sx_screen = area.x + sx.value - self.offset.value;
+            if self.desktop.value != 0.0 {
+                // Columns left of the middle slide out to the left, the rest to the right.
+                let out = if sx_screen + w / 2.0 < area.x + area.w / 2.0 { area.x - w - sx_screen } else { area.max_x() - sx_screen };
+                sx_screen += out * self.desktop.value;
+            }
+            let (x, hidden) = self.park(sx_screen, w, area);
             for id in &col.windows {
                 let y = if hidden { full.max_y() - PEEK } else { area.y + self.row_y.get(id).copied().unwrap_or(self.strip.gap) };
                 let p = (x.round(), y.round());
