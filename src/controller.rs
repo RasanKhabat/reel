@@ -356,6 +356,19 @@ impl StripController {
             self.focus_pending = true; // done when the move settles
             return;
         }
+        self.focus_now();
+    }
+
+    /// Focuses at once, even with "focus after the glide". Used when a window is being moved
+    /// into another column (stack, pop out, tabs): raised late, it would slide behind the
+    /// windows already there and then pop to the front, which looks like flicker.
+    fn focus_moved_window(&mut self) {
+        arm_focus_guard();
+        self.focus_pending = false;
+        self.focus_now();
+    }
+
+    fn focus_now(&mut self) {
         if let Some(w) = self.strip.focused_window().and_then(|id| self.wins.get(&id)) {
             w.focus();
             // An app that comes to the front sometimes nudges its window a few points a
@@ -410,7 +423,7 @@ impl StripController {
             return self.refuse("stack: no column on that side");
         }
         self.commit(true, true);
-        self.focus_focused_window();
+        self.focus_moved_window();
     }
 
     pub fn expel(&mut self, delta: isize) {
@@ -421,7 +434,7 @@ impl StripController {
             return self.refuse("pop out: focused column has only one window");
         }
         self.commit(true, true);
-        self.focus_focused_window();
+        self.focus_moved_window();
     }
 
     pub fn toggle_tabbed(&mut self) {
@@ -432,7 +445,7 @@ impl StripController {
             return self.refuse("tabbed: focused column has only one window");
         }
         self.commit(true, true);
-        self.focus_focused_window();
+        self.focus_moved_window();
     }
 
     pub fn unstack_all(&mut self) {
