@@ -20,6 +20,8 @@ struct Mailbox {
     wake: Condvar,
     working: AtomicBool,
     stop: AtomicBool,
+    /// Moves posted to this app that haven't landed yet.
+    in_flight: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -41,6 +43,7 @@ impl Mover {
         let size = size.or_else(|| p.get(&key).and_then(|w| w.3));
         if p.insert(key, (element.clone(), x, y, size)).is_none() {
             IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+            mb.in_flight.fetch_add(1, Ordering::SeqCst);
         }
         drop(p);
         mb.wake.notify_one();
@@ -54,11 +57,23 @@ impl Mover {
         }
     }
 
-    /// Waits (up to `timeout`) for every posted move to land. Used before Reel moves
-    /// windows itself synchronously, so a stale queued move can't land afterwards.
+    /// Stops every worker (tiling turned off).
+    pub fn forget_all(&mut self) {
+        let pids: Vec<i32> = self.boxes.keys().copied().collect();
+        for pid in pids {
+            self.forget(pid);
+        }
+    }
+
+    /// Waits (up to `timeout`) for posted moves to land. Used before Reel moves or reads
+    /// windows itself synchronously, so a stale queued move can't land afterwards. Apps that
+    /// aren't answering are not waited for: this runs on the main thread, and waiting out
+    /// a busy app here stalled every key press.
     pub fn flush(timeout: std::time::Duration) {
+        let boxes: Vec<(i32, Arc<Mailbox>)> = crate::with_mover(|m| m.boxes.iter().map(|(p, b)| (*p, b.clone())).collect());
         let end = std::time::Instant::now() + timeout;
-        while !Self::is_idle() && std::time::Instant::now() < end {
+        let busy = |b: &Mailbox| b.in_flight.load(Ordering::SeqCst) > 0;
+        while boxes.iter().any(|(pid, b)| busy(b) && !crate::ax::app_unresponsive(*pid)) && std::time::Instant::now() < end {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
@@ -75,6 +90,7 @@ fn spawn(pid: i32) -> Arc<Mailbox> {
         wake: Condvar::new(),
         working: AtomicBool::new(false),
         stop: AtomicBool::new(false),
+        in_flight: AtomicUsize::new(0),
     });
     let worker = mb.clone();
     std::thread::Builder::new()
@@ -96,6 +112,7 @@ fn spawn(pid: i32) -> Arc<Mailbox> {
                 }
                 if worker.stop.load(Ordering::SeqCst) {
                     IN_FLIGHT.fetch_sub(p.len(), Ordering::SeqCst);
+                    worker.in_flight.fetch_sub(p.len(), Ordering::SeqCst);
                     return;
                 }
                 worker.working.store(true, Ordering::SeqCst);
@@ -108,6 +125,7 @@ fn spawn(pid: i32) -> Arc<Mailbox> {
                 }
             }
             IN_FLIGHT.fetch_sub(batch.len(), Ordering::SeqCst);
+            worker.in_flight.fetch_sub(batch.len(), Ordering::SeqCst);
             worker.working.store(false, Ordering::SeqCst);
             }
         })

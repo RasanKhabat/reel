@@ -103,6 +103,8 @@ impl Desk {
             s.stop();
         }
         self.strips.clear();
+        // Nothing moves windows while tiling is off; quit apps would leave threads behind.
+        crate::with_mover(|m| m.forget_all());
         self.saved.tiling = remember;
         layout_store::save(&self.saved);
     }
@@ -210,6 +212,20 @@ impl Desk {
         if !self.is_tiling {
             return;
         }
+        // Waking, unlocking or a display sleeping often reports a change that leaves the
+        // displays exactly as they were. Rebuilding then would pile every window up and
+        // re-sort them (some may still be hidden from Accessibility right after unlock);
+        // just put them back in place.
+        let now = geometry::displays(self.mtm);
+        let same = now.len() == self.strips.len()
+            && now.iter().zip(&self.strips).all(|(d, s)| d.key == s.display.key && d.full == s.display.full && d.usable == s.display.usable);
+        if same {
+            crate::log::write("displays unchanged; putting windows back in place");
+            for s in &mut self.strips {
+                s.reapply();
+            }
+            return;
+        }
         self.save_now();
         for s in &mut self.strips {
             s.stop();
@@ -276,6 +292,11 @@ impl Desk {
                 }
             }
             WindowEvent::Resized(el) => {
+                // While locked (and with displays asleep) macOS resizes windows on its own;
+                // following that would undo the layout. The unlock puts everything back.
+                if crate::screen_locked() {
+                    return;
+                }
                 if let Some(s) = self.strips.iter_mut().find(|s| s.contains(&el)) {
                     s.window_resized(&el);
                 }

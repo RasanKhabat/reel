@@ -260,6 +260,9 @@ fn velocity(samples: &[(Instant, f64)]) -> f64 {
 extern "C" fn scroll_tap(_proxy: *const c_void, kind: u32, event: CGEventRef, _user: *mut c_void) -> CGEventRef {
     if kind == kCGEventTapDisabledByTimeout || kind == kCGEventTapDisabledByUserInput {
         unsafe { CGEventTapEnable(SCROLL_TAP, true) };
+        // The gesture's end may have gone by while the tap was off; without it every later
+        // scroll would be swallowed and the strip would stay "dragging".
+        end_lost_gesture();
         return event;
     }
     if kind != kCGEventScrollWheel {
@@ -287,6 +290,12 @@ extern "C" fn scroll_tap(_proxy: *const c_void, kind: u32, event: CGEventRef, _u
                 return true;
             }
             // Trackpad phases: 1 began, 2 changed, 4 ended, 8 cancelled, 128 may-begin.
+            if g.active && phase == 1 {
+                // A new gesture began without the last one ending: end it first.
+                g.active = false;
+                g.samples.clear();
+                send(Input::ScrollEnd(0.0));
+            }
             if g.active {
                 if momentum != 0 {
                     return true; // Reel does its own coasting
@@ -320,6 +329,17 @@ extern "C" fn scroll_tap(_proxy: *const c_void, kind: u32, event: CGEventRef, _u
         }
     });
     if swallow { std::ptr::null() } else { event }
+}
+
+fn end_lost_gesture() {
+    GESTURE.with(|g| {
+        let mut g = g.borrow_mut();
+        if g.active {
+            g.active = false;
+            g.samples.clear();
+            send(Input::ScrollEnd(0.0));
+        }
+    });
 }
 
 /// Starts the scroll tap thread once. Returns whether swiping is available.

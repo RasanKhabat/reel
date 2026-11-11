@@ -150,6 +150,8 @@ pub struct StripController {
     settled: HashMap<WinId, (Size, Size)>,
     /// Experiment "pause enhanced UI": apps whose AXEnhancedUserInterface Reel turned off.
     eui_paused: HashSet<i32>,
+    /// Recent size changes Reel reacted to, per window: (since, how many).
+    resize_burst: HashMap<WinId, (Instant, u32)>,
 }
 
 impl StripController {
@@ -192,6 +194,7 @@ impl StripController {
             settled: HashMap::new(),
             width_anim: HashMap::new(),
             eui_paused: HashSet::new(),
+            resize_burst: HashMap::new(),
         }
     }
 
@@ -227,7 +230,13 @@ impl StripController {
 
         if !self.strip.columns.is_empty() {
             // Keep structure: drop windows that are gone, append newcomers by position.
-            let gone: Vec<WinId> = self.wins.iter().filter(|(_, w)| !live.iter().any(|(e, _, _)| *e == w.el)).map(|(id, _)| *id).collect();
+            // An app that isn't answering lists no windows; that doesn't mean they closed.
+            let gone: Vec<WinId> = self
+                .wins
+                .iter()
+                .filter(|(_, w)| !live.iter().any(|(e, _, _)| *e == w.el) && !ax::app_unresponsive(w.pid))
+                .map(|(id, _)| *id)
+                .collect();
             for id in gone {
                 self.strip.remove_window(id);
                 self.forget(id);
@@ -314,6 +323,14 @@ impl StripController {
         self.applied.clear();
         self.row_y.clear();
         self.last_pushed.clear();
+    }
+
+    /// Puts every window back where the strip says it belongs, even ones Reel thinks it
+    /// already placed (macOS may have moved them, for example while the screen was locked).
+    pub fn reapply(&mut self) {
+        self.applied.clear();
+        self.last_pushed.clear();
+        self.commit(false, false);
     }
 
     pub fn set_gap(&mut self, gap: f64) {
@@ -611,6 +628,17 @@ impl StripController {
         let Some(id) = self.find(el) else { return };
         let Some((c, _)) = self.strip.locate(id) else { return };
         let (Some(size), Some(applied)) = (el.size(), self.applied.get(&id).copied()) else { return };
+        let mouse_down = objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0;
+        // An app that answers each of Reel's corrections with a size of its own (snapping to
+        // text rows, or two stacked windows wanting different widths) would loop forever,
+        // moving windows and redrawing nonstop. After a few rounds, accept what it wants.
+        let differs = !close((size.width, size.height), applied);
+        if differs && !mouse_down && !self.width_anim.contains_key(&id) && self.resizing_in_a_loop(id) {
+            self.applied.insert(id, (size.width, size.height));
+            self.settled.insert(id, (applied, (size.width, size.height)));
+            self.strip.columns[c].accepted_width = Some(size.width);
+            return;
+        }
         if (size.width - applied.0).abs() <= 2.0 {
             // Same width but a different height: the app changed it by itself (some do when
             // they come to the front). Heights belong to the layout, so put it back.
@@ -635,7 +663,6 @@ impl StripController {
         // the mouse, which made dragging the left edge jumpy. Keep the window's left edge where
         // the user has it (scrolling the strip under it if needed) and apply the rest at once.
         // Other size changes (apps, macOS adjusting a frame) are absorbed by a normal glide.
-        let mouse_down = objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0;
         let area = self.usable();
         let edges = self.strip.column_edges().0;
         match (mouse_down, el.position(), edges.get(c)) {
@@ -651,6 +678,23 @@ impl StripController {
                 self.commit(true, true);
             }
         }
+    }
+
+    /// Counts a size change of this window; true once it has changed too often to keep up.
+    fn resizing_in_a_loop(&mut self, id: WinId) -> bool {
+        const WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+        const LIMIT: u32 = 8;
+        let entry = self.resize_burst.entry(id).or_insert((Instant::now(), 0));
+        if entry.0.elapsed() > WINDOW {
+            *entry = (Instant::now(), 0);
+        }
+        entry.1 += 1;
+        if entry.1 == LIMIT {
+            if let Some(w) = self.wins.get(&id) {
+                crate::log::write(&format!("  \"{}\" keeps resizing itself; keeping the size it wants", w.app));
+            }
+        }
+        entry.1 >= LIMIT
     }
 
     /// An app quit: drop all of its windows at once.
@@ -949,8 +993,18 @@ impl StripController {
         if settled && self.drag_raw.is_none() {
             self.animating = false;
             if !self.eui_paused.is_empty() {
-                crate::mover::Mover::flush(std::time::Duration::from_millis(100));
-                self.restore_enhanced_ui();
+                // Turning the mode back on makes Chromium/Electron apps rebuild their whole
+                // accessibility tree; doing that after every key press loaded the Mac. Wait
+                // until moves have stopped for a moment.
+                let key = self.display.key.clone();
+                crate::later(1.5, move |d| {
+                    if let Some(s) = d.strips.iter_mut().find(|s| s.key() == key) {
+                        if !s.animating && !s.eui_paused.is_empty() {
+                            crate::mover::Mover::flush(std::time::Duration::from_millis(100));
+                            s.restore_enhanced_ui();
+                        }
+                    }
+                });
             }
             if std::mem::take(&mut self.focus_pending) {
                 self.focus_focused_window();
@@ -1182,6 +1236,7 @@ impl StripController {
         self.width_anim.remove(&id);
         self.last_sized.remove(&id);
         self.settled.remove(&id);
+        self.resize_burst.remove(&id);
         self.wins.remove(&id);
         self.applied.remove(&id);
         self.row_y.remove(&id);

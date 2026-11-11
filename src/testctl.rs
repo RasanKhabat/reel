@@ -55,6 +55,12 @@ fn run(command: String, id: String) {
             return;
         }
         "dump" => {}
+        // Answers at once, without waiting for moves to land: shows whether the main thread
+        // is free (the tests time it while the test app is frozen).
+        "ping" => {
+            write_state(&id);
+            return;
+        }
         "animations:on" => crate::spring::set_animations_on(true),
         "animations:off" => crate::spring::set_animations_on(false),
         // exp:<key>:on|off switches one animation experiment for this test instance.

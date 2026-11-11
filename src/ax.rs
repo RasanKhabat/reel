@@ -110,10 +110,28 @@ impl Element {
         pid
     }
 
+    /// Runs one AX request, unless this is the main thread and the app recently failed to
+    /// answer in time: then it fails at once instead of waiting out the timeout again.
+    fn call(&self, f: impl FnOnce() -> AXError) -> AXError {
+        let pid = self.pid();
+        if pid > 0 && unresponsive::skip(pid) {
+            return kAXErrorCannotComplete;
+        }
+        let start = std::time::Instant::now();
+        let err = f();
+        // The same error also comes back at once for some refusals; only a request that
+        // waited (most of) its timeout means the app is busy. Normal answers take a few
+        // milliseconds; Reel's shortest timeout is 0.1 s.
+        if err == kAXErrorCannotComplete && pid > 0 && start.elapsed() >= unresponsive::SLOW {
+            unresponsive::mark(pid);
+        }
+        err
+    }
+
     fn copy(&self, attr: &str) -> Result<Cf, AXError> {
         let name = cfstr(attr);
         let mut out: CFTypeRef = std::ptr::null();
-        let err = unsafe { AXUIElementCopyAttributeValue(self.0, name.0, &mut out) };
+        let err = self.call(|| unsafe { AXUIElementCopyAttributeValue(self.0, name.0, &mut out) });
         if err != kAXErrorSuccess {
             return Err(err);
         }
@@ -188,7 +206,7 @@ impl Element {
         unsafe {
             if let Some(v) = Cf::owned(AXValueCreate(kAXValueCGPointType, &p as *const _ as *const c_void)) {
                 let name = cfstr(POSITION);
-                AXUIElementSetAttributeValue(self.0, name.0, v.0);
+                self.call(|| AXUIElementSetAttributeValue(self.0, name.0, v.0));
             }
         }
     }
@@ -198,19 +216,19 @@ impl Element {
         unsafe {
             if let Some(v) = Cf::owned(AXValueCreate(kAXValueCGSizeType, &s as *const _ as *const c_void)) {
                 let name = cfstr(SIZE);
-                AXUIElementSetAttributeValue(self.0, name.0, v.0);
+                self.call(|| AXUIElementSetAttributeValue(self.0, name.0, v.0));
             }
         }
     }
 
     pub fn set_bool(&self, attr: &str, value: bool) {
         let name = cfstr(attr);
-        unsafe { AXUIElementSetAttributeValue(self.0, name.0, if value { kCFBooleanTrue } else { kCFBooleanFalse }) };
+        self.call(|| unsafe { AXUIElementSetAttributeValue(self.0, name.0, if value { kCFBooleanTrue } else { kCFBooleanFalse }) });
     }
 
     pub fn perform(&self, action: &str) {
         let name = cfstr(action);
-        unsafe { AXUIElementPerformAction(self.0, name.0) };
+        self.call(|| unsafe { AXUIElementPerformAction(self.0, name.0) });
     }
 
     /// True only when AX says the element no longer exists. A busy app that times out
@@ -230,5 +248,51 @@ impl Element {
     /// The window with keyboard focus system-wide, if any.
     pub fn system_focused_window() -> Option<Element> {
         Element::system_wide().element(FOCUSED_APPLICATION)?.element(FOCUSED_WINDOW)
+    }
+}
+
+/// Whether the app recently failed to answer in time (Reel is leaving it alone).
+pub fn app_unresponsive(pid: i32) -> bool {
+    unresponsive::is_busy(pid)
+}
+
+/// Apps that recently didn't answer an AX request in time. Every request on the main thread
+/// to a busy app would wait out the full timeout, and a single command makes many of them
+/// (one per window), which froze Reel's keys and menu for seconds. For a short while after
+/// a timeout, main-thread requests to that app fail at once. The mover threads still try
+/// (each app has its own), and their timeouts count too.
+mod unresponsive {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const BACK_OFF: Duration = Duration::from_secs(3);
+    pub const SLOW: Duration = Duration::from_millis(90);
+    static UNTIL: Mutex<Option<HashMap<i32, Instant>>> = Mutex::new(None);
+
+    fn on_main_thread() -> bool {
+        unsafe { libc::pthread_main_np() == 1 }
+    }
+
+    pub fn skip(pid: i32) -> bool {
+        on_main_thread() && is_busy(pid)
+    }
+
+    pub fn is_busy(pid: i32) -> bool {
+        let guard = UNTIL.lock().unwrap();
+        guard.as_ref().and_then(|m| m.get(&pid)).is_some_and(|t| Instant::now() < *t)
+    }
+
+    pub fn mark(pid: i32) {
+        let mut guard = UNTIL.lock().unwrap();
+        let map = guard.get_or_insert_with(HashMap::new);
+        let now = Instant::now();
+        let was_busy = map.get(&pid).is_some_and(|t| now < *t);
+        map.insert(pid, now + BACK_OFF);
+        drop(guard);
+        if !was_busy {
+            let name = if on_main_thread() { crate::apps::info(pid).name } else { format!("pid {pid}") };
+            crate::log::write(&format!("{name} isn't answering; leaving it alone for a moment"));
+        }
     }
 }

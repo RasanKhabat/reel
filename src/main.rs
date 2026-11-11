@@ -256,11 +256,12 @@ fn observe_app_notifications() {
         });
     });
     let unlocked = RcBlock::new(|_: NonNull<NSNotification>| {
+        // Resizes are ignored while locked, so always check the layout after unlocking.
+        // Give windows a moment to reappear to Accessibility.
         if SCREEN_PENDING.with(|p| p.replace(false)) {
             log::write("screen unlocked; applying the display change");
-            // Give windows a moment to reappear to Accessibility.
-            apply_display_change_when_unlocked(1.0);
         }
+        apply_display_change_when_unlocked(1.0);
     });
     let terminate = RcBlock::new(|_: NonNull<NSNotification>| quit());
     unsafe {

@@ -36,6 +36,7 @@ pub struct CGSize {
 
 pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
+pub const kAXErrorCannotComplete: AXError = -25204;
 pub const kAXValueCGPointType: u32 = 1;
 pub const kAXValueCGSizeType: u32 = 2;
 pub const kCFStringEncodingUTF8: u32 = 0x0800_0100;
