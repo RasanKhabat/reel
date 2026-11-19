@@ -247,7 +247,21 @@ impl Element {
 
     /// The window with keyboard focus system-wide, if any.
     pub fn system_focused_window() -> Option<Element> {
-        Element::system_wide().element(FOCUSED_APPLICATION)?.element(FOCUSED_WINDOW)
+        // The system-wide query asks the frontmost app, but isn't tied to its pid, so the
+        // back-off never skipped it: with that app frozen, every command waited out the full
+        // timeout (twice). Skip it while the frontmost app is busy, and count a timeout.
+        let front = objc2_app_kit::NSWorkspace::sharedWorkspace().frontmostApplication().map(|a| a.processIdentifier());
+        if front.is_some_and(|pid| pid > 0 && unresponsive::skip(pid)) {
+            return None;
+        }
+        let start = std::time::Instant::now();
+        let app = Element::system_wide().element(FOCUSED_APPLICATION);
+        if app.is_none() && start.elapsed() >= unresponsive::SLOW {
+            if let Some(pid) = front.filter(|p| *p > 0) {
+                unresponsive::mark(pid);
+            }
+        }
+        app?.element(FOCUSED_WINDOW)
     }
 }
 

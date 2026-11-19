@@ -152,6 +152,9 @@ pub struct StripController {
     eui_paused: HashSet<i32>,
     /// Recent size changes Reel reacted to, per window: (since, how many).
     resize_burst: HashMap<WinId, (Instant, u32)>,
+    /// The size Reel last took over from the window itself (a hand or app resize), not one
+    /// Reel asked for. A further change from there isn't the app fighting Reel.
+    adopted_size: HashMap<WinId, (f64, f64)>,
 }
 
 impl StripController {
@@ -195,6 +198,7 @@ impl StripController {
             width_anim: HashMap::new(),
             eui_paused: HashSet::new(),
             resize_burst: HashMap::new(),
+            adopted_size: HashMap::new(),
         }
     }
 
@@ -633,7 +637,10 @@ impl StripController {
         // text rows, or two stacked windows wanting different widths) would loop forever,
         // moving windows and redrawing nonstop. After a few rounds, accept what it wants.
         let differs = !close((size.width, size.height), applied);
-        if differs && !mouse_down && !self.width_anim.contains_key(&id) && self.resizing_in_a_loop(id) {
+        // Only a change answering a size Reel set counts; one that follows a size Reel just took
+        // from the window (the user or app resizing it step by step) is no loop.
+        let answers_reel = self.adopted_size.get(&id) != Some(&applied);
+        if differs && answers_reel && !mouse_down && !self.width_anim.contains_key(&id) && self.resizing_in_a_loop(id) {
             self.applied.insert(id, (size.width, size.height));
             self.settled.insert(id, (applied, (size.width, size.height)));
             self.strip.columns[c].accepted_width = Some(size.width);
@@ -659,6 +666,7 @@ impl StripController {
         }
         self.strip.columns[c].accepted_width = Some(size.width);
         self.applied.insert(id, (size.width, applied.1));
+        self.adopted_size.insert(id, (size.width, applied.1));
         // While the user drags an edge (mouse button down), gliding would move the window under
         // the mouse, which made dragging the left edge jumpy. Keep the window's left edge where
         // the user has it (scrolling the strip under it if needed) and apply the rest at once.
@@ -1237,6 +1245,7 @@ impl StripController {
         self.last_sized.remove(&id);
         self.settled.remove(&id);
         self.resize_burst.remove(&id);
+        self.adopted_size.remove(&id);
         self.wins.remove(&id);
         self.applied.remove(&id);
         self.row_y.remove(&id);
