@@ -344,13 +344,23 @@ impl Desk {
 
     /// New windows can arrive before their subrole/frame is readable; retry briefly.
     fn adopt(&mut self, el: Element, pid: i32, attempts: u32) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(20);
+        self.adopt_until(el, pid, attempts, deadline);
+    }
+
+    /// An app busy opening its window (Device Hub booting a simulator) is in Reel's back-off,
+    /// so every read fails at once and the short retries ran out before it answered, leaving
+    /// the window untiled. While it's busy, keep waiting without spending attempts.
+    fn adopt_until(&mut self, el: Element, pid: i32, attempts: u32, deadline: Instant) {
         if self.strips.iter().any(|s| s.contains(&el)) || !crate::apps::manages_pid(pid) {
             return;
         }
         let frame = if el.is_tileable() { el.frame() } else { None };
         let Some(frame) = frame else {
-            if attempts > 0 {
-                crate::later(0.12, move |d| d.adopt(el, pid, attempts - 1));
+            if ax::app_unresponsive(pid) && Instant::now() < deadline && !el.is_gone() {
+                crate::later(0.5, move |d| d.adopt_until(el, pid, attempts, deadline));
+            } else if attempts > 0 {
+                crate::later(0.12, move |d| d.adopt_until(el, pid, attempts - 1, deadline));
             }
             return;
         };
