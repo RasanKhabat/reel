@@ -6,7 +6,7 @@ use crate::controller::{focus_guard_armed, OverlayAction, OverlayEvent, StripCon
 use crate::events::WindowEvent;
 use crate::geometry::{self, Rect};
 use crate::input::Input;
-use crate::layout_store::{self, SavedLayout};
+use crate::layout_store::{self, SavedLayout, SavedStrip};
 use crate::overlays::Overview;
 use crate::prefs::{self, OverviewMode, ScrollModifier};
 use crate::shortcuts::{Combo, Command, Preset};
@@ -31,6 +31,15 @@ pub struct Desk {
     dragging: Option<String>,
     wheel_generation: u64,
     save_generation: u64,
+    /// Raised on every real display change and when tiling turns on or off; a pending
+    /// display-change retry only acts while it still matches.
+    display_generation: u64,
+    /// While set, a display change is still waiting for this many windows to show up again
+    /// (apps can list none to Accessibility right after an unlock).
+    pending_expected: Option<usize>,
+    /// The saved strips as they were when that display change began. Retries rebuild from
+    /// this copy so a partial layout saved meanwhile can't change the order.
+    retry_reference: HashMap<String, SavedStrip>,
     mtm: MainThreadMarker,
     pub last_tick: Instant,
 }
@@ -57,6 +66,9 @@ impl Desk {
             dragging: None,
             wheel_generation: 0,
             save_generation: 0,
+            display_generation: 0,
+            pending_expected: None,
+            retry_reference: HashMap::new(),
             mtm,
             last_tick: Instant::now(),
         }
@@ -77,6 +89,7 @@ impl Desk {
             return;
         }
         self.is_tiling = true;
+        self.display_generation += 1;
         crate::events::start(|e| crate::with_desk(move |d| d.handle(e)));
         self.build_strips();
         self.rescan_all();
@@ -95,6 +108,7 @@ impl Desk {
         }
         self.save_now(); // snapshot before strips are emptied
         self.is_tiling = false;
+        self.end_display_retries();
         crate::input::set_scroll_enabled(false);
         crate::input::uninstall();
         self.failed_shortcuts.clear();
@@ -183,17 +197,27 @@ impl Desk {
         if !self.is_tiling {
             return;
         }
+        self.assign_and_rebuild(Self::tileable_windows(), false);
+    }
+
+    /// Hands each strip its share of `live` and rebuilds it. Empty strips follow the saved
+    /// layout: `retry_reference` during a display-change retry, else the current one.
+    fn assign_and_rebuild(&mut self, live: Vec<(Element, i32, Rect)>, from_retry_reference: bool) {
         let mut assigned: Vec<Vec<(Element, i32, Rect)>> = vec![vec![]; self.strips.len()];
-        for (el, pid, frame) in Self::tileable_windows() {
+        for (el, pid, frame) in live {
             let owner = self.strips.iter().position(|s| s.contains(&el)).or_else(|| self.nearest(&frame));
             if let Some(i) = owner {
                 assigned[i].push((el, pid, frame));
             }
         }
+        let references = if from_retry_reference { &self.retry_reference } else { &self.saved.strips };
         for (s, live) in self.strips.iter_mut().zip(assigned) {
-            let reference = self.saved.strips.get(s.key()).cloned();
-            s.rebuild(live, reference.as_ref());
+            s.rebuild(live, references.get(s.key()));
         }
+    }
+
+    fn held_windows(&self) -> usize {
+        self.strips.iter().map(|s| s.window_count()).sum()
     }
 
     /// The strip whose display contains the rect's centre, else the closest display.
@@ -226,12 +250,76 @@ impl Desk {
             }
             return;
         }
+        // Right after an unlock apps may list few or no windows yet, and windows that come
+        // back fire no "created" event; remember how many there were so retries can tell.
+        // A second change mid-retry keeps the higher count and the layout copy from the first.
+        let expected = self.held_windows().max(self.pending_expected.unwrap_or(0));
+        let first = self.pending_expected.is_none();
+        self.display_generation += 1;
+        // On a first change the strips are still complete: save them, then copy that layout
+        // and only then guard saves. Mid-retry the guard is already on and the copy is kept.
         self.save_now();
+        if first {
+            self.retry_reference = self.saved.strips.clone();
+        }
+        self.pending_expected = Some(expected);
         for s in &mut self.strips {
             s.stop();
         }
         self.build_strips();
-        self.rescan_all();
+        self.assign_and_rebuild(Self::tileable_windows(), true);
+        let found = self.held_windows();
+        crate::log::write(&format!("display change: found {found} of {expected} windows (attempt 0, at the change)"));
+        match display_retry_delay(0) {
+            Some(delay) if found < expected => Self::schedule_display_retry(self.display_generation, 0, delay),
+            _ => self.end_display_retries(),
+        }
+    }
+
+    fn schedule_display_retry(generation: u64, attempt: u32, delay: f64) {
+        crate::later(delay, move |d| d.display_retry(generation, attempt));
+    }
+
+    fn display_retry(&mut self, generation: u64, attempt: u32) {
+        let Some(expected) = self.pending_expected else { return };
+        let same_generation = generation == self.display_generation;
+        let locked = crate::screen_locked();
+        let held = self.held_windows();
+        let scanning = same_generation && self.is_tiling && !locked && held < expected;
+        let live = if scanning { Self::tileable_windows() } else { vec![] };
+        let covers_held = self.strips.iter().all(|s| s.held_all_in(&live));
+        match retry_step(attempt, same_generation, self.is_tiling, locked, live.len(), held, covers_held, expected) {
+            RetryStep::Stop => {
+                // A newer change or tiling turning off owns the cycle now; leave it alone.
+                if same_generation && self.is_tiling {
+                    crate::log::write(&format!("display change: done at {held} of {expected} windows (attempt {attempt})"));
+                    self.end_display_retries();
+                }
+            }
+            RetryStep::Wait(delay) => Self::schedule_display_retry(generation, attempt, delay),
+            RetryStep::Retry(delay) => {
+                let note = if covers_held { "" } else { ", missing some held windows" };
+                crate::log::write(&format!("display change: found {} of {expected} windows (attempt {attempt}{note}); trying again", live.len()));
+                Self::schedule_display_retry(generation, attempt + 1, delay);
+            }
+            RetryStep::Rebuild => {
+                for s in &mut self.strips {
+                    s.reset();
+                }
+                self.assign_and_rebuild(live, true);
+                let found = self.held_windows();
+                crate::log::write(&format!("display change: found {found} of {expected} windows (attempt {attempt}); rebuilt"));
+                match display_retry_delay(attempt + 1) {
+                    Some(delay) if found < expected => Self::schedule_display_retry(generation, attempt + 1, delay),
+                    _ => self.end_display_retries(),
+                }
+            }
+        }
+    }
+
+    fn end_display_retries(&mut self) {
+        self.pending_expected = None;
+        self.retry_reference.clear();
     }
 
     /// The strip holding the focused window; else the one under the pointer.
@@ -667,6 +755,12 @@ impl Desk {
             return;
         }
         for s in &self.strips {
+            // While a display change is still short of windows, don't let a partial strip
+            // replace a fuller saved layout (quitting or turning tiling off mid-retry).
+            let saved = self.saved.strips.get(s.key()).map_or(0, saved_window_count);
+            if !keep_saved_or_write(self.pending_expected.is_some(), s.window_count(), saved) {
+                continue;
+            }
             self.saved.strips.insert(s.key().to_string(), s.snapshot());
         }
         layout_store::save(&self.saved);
@@ -699,5 +793,108 @@ impl Desk {
         }
         crate::log::write(&format!("rescued {moved} off-screen window(s)"));
         moved
+    }
+}
+
+/// Whether `save_now` may write a strip holding `held` windows over a saved layout of
+/// `saved` windows: always, unless a display-change retry is pending and the strip is short.
+fn keep_saved_or_write(retry_pending: bool, held: usize, saved: usize) -> bool {
+    !retry_pending || held >= saved
+}
+
+fn saved_window_count(s: &SavedStrip) -> usize {
+    s.columns.iter().map(|c| c.windows.len()).sum()
+}
+
+/// Delays before each display-change retry: about 15 s in all.
+fn display_retry_delay(attempt: u32) -> Option<f64> {
+    [1.0, 2.0, 4.0, 8.0].get(attempt as usize).copied()
+}
+
+#[derive(Debug, PartialEq)]
+enum RetryStep {
+    /// The cycle is over (count reached, last attempt, or no longer ours).
+    Stop,
+    /// Screen locked: Accessibility sees no windows. Check again without using an attempt.
+    Wait(f64),
+    /// The scan found more windows than the strips hold, including all of those: rebuild
+    /// from the saved layout.
+    Rebuild,
+    /// No better scan yet: try the next attempt after this delay.
+    Retry(f64),
+}
+
+/// What a display-change retry should do. Strips are only rebuilt from a scan that is
+/// bigger than what they hold and includes every held window (a busy app's windows are
+/// missing from scans while Reel backs off), so a bad scan never drops windows.
+#[allow(clippy::too_many_arguments)]
+fn retry_step(attempt: u32, same_generation: bool, tiling: bool, locked: bool, found_now: usize, held_now: usize, covers_held: bool, expected: usize) -> RetryStep {
+    if !same_generation || !tiling || held_now >= expected {
+        return RetryStep::Stop;
+    }
+    if locked {
+        return RetryStep::Wait(2.0);
+    }
+    if found_now > held_now && covers_held {
+        return RetryStep::Rebuild;
+    }
+    match display_retry_delay(attempt + 1) {
+        Some(delay) => RetryStep::Retry(delay),
+        None => RetryStep::Stop,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delays_double_and_stop_after_four() {
+        let delays: Vec<f64> = (0..6).map_while(display_retry_delay).collect();
+        assert_eq!(delays, vec![1.0, 2.0, 4.0, 8.0]);
+        assert!(delays.iter().sum::<f64>() <= 15.0);
+    }
+
+    #[test]
+    fn stops_when_no_longer_ours_or_done() {
+        assert_eq!(retry_step(0, false, true, false, 9, 0, true, 9), RetryStep::Stop);
+        assert_eq!(retry_step(0, true, false, false, 9, 0, true, 9), RetryStep::Stop);
+        assert_eq!(retry_step(0, true, true, false, 9, 9, true, 9), RetryStep::Stop);
+        assert_eq!(retry_step(0, true, true, false, 0, 10, true, 9), RetryStep::Stop);
+    }
+
+    #[test]
+    fn waits_while_locked() {
+        assert_eq!(retry_step(2, true, true, true, 0, 3, true, 9), RetryStep::Wait(2.0));
+    }
+
+    #[test]
+    fn rebuilds_only_on_a_better_scan() {
+        assert_eq!(retry_step(0, true, true, false, 5, 3, true, 9), RetryStep::Rebuild);
+        assert_eq!(retry_step(0, true, true, false, 3, 3, true, 9), RetryStep::Retry(2.0));
+        assert_eq!(retry_step(0, true, true, false, 0, 3, true, 9), RetryStep::Retry(2.0));
+    }
+
+    #[test]
+    fn gives_up_after_the_last_attempt() {
+        assert_eq!(retry_step(2, true, true, false, 0, 0, true, 9), RetryStep::Retry(8.0));
+        assert_eq!(retry_step(3, true, true, false, 0, 0, true, 9), RetryStep::Stop);
+        // A better scan on the last attempt still rebuilds.
+        assert_eq!(retry_step(3, true, true, false, 9, 0, true, 9), RetryStep::Rebuild);
+    }
+
+    #[test]
+    fn never_rebuilds_from_a_scan_missing_held_windows() {
+        // Bigger scan, but a busy app's held windows are missing: wait for a full one.
+        assert_eq!(retry_step(0, true, true, false, 5, 3, false, 9), RetryStep::Retry(2.0));
+        assert_eq!(retry_step(3, true, true, false, 5, 3, false, 9), RetryStep::Stop);
+    }
+
+    #[test]
+    fn saves_shrink_a_layout_only_when_no_retry_is_pending() {
+        assert!(keep_saved_or_write(false, 2, 9));
+        assert!(!keep_saved_or_write(true, 2, 9));
+        assert!(keep_saved_or_write(true, 9, 9));
+        assert!(keep_saved_or_write(true, 10, 9));
     }
 }

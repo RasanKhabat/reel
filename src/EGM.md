@@ -82,6 +82,12 @@ per-app mover threads (`mover.rs`). Input arrives from global hotkeys and a scro
   off; `stop_tiling` saves before clearing strips and brings parked windows back on screen.
 - **Lock/wake:** a locked screen hides all windows from AX, so resizes are ignored while locked and
   display changes wait for unlock; unchanged displays only reapply (no re-sort).
+- **Display-change retries:** a real display change records the windows held (`pending_expected`);
+  while a rescan finds fewer, `display_retry` scans again (1, 2, 4, 8 s, waiting while locked) and
+  rebuilds from `retry_reference` only on a bigger scan that includes every held window.
+  `save_now` doesn't shrink a saved strip while a retry is pending; `display_generation` cancels
+  stale retries. While locked the cycle waits without using attempts (and keeps the fuller saved
+  layout until unlock).
 - **Focus guard:** for 400 ms after Reel moves focus, system focus notifications are ignored.
 - **Resize loops:** after 8 self-resizes within 3 s Reel accepts the app's size; sizes the app
   insists on are recorded as `settled` and not re-corrected.

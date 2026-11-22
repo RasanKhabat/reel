@@ -311,9 +311,6 @@ impl StripController {
 
     pub fn stop(&mut self) {
         self.restore_enhanced_ui();
-        self.width_anim.clear();
-        self.last_sized.clear();
-        self.focus_pending = false;
         self.animating = false;
         self.overview.close();
         self.tab_bars.clear();
@@ -321,12 +318,31 @@ impl StripController {
         self.veils.clear();
         crate::mover::Mover::flush(std::time::Duration::from_millis(500));
         self.bring_parked_windows_back();
+        self.reset();
+    }
+
+    /// Forgets every window without moving any, so the next `rebuild` starts from the saved
+    /// layout. Tab bars, veils and the border follow on the next commit.
+    pub fn reset(&mut self) {
         self.strip.columns.clear();
         self.wins.clear();
         self.column_x.clear();
         self.applied.clear();
         self.row_y.clear();
         self.last_pushed.clear();
+        self.width_anim.clear();
+        self.last_sized.clear();
+        self.focus_pending = false;
+    }
+
+    /// Whether every window this strip holds is in `live` (a scan that skipped a busy app
+    /// would not be).
+    pub fn held_all_in(&self, live: &[(Element, i32, Rect)]) -> bool {
+        self.wins.values().all(|w| live.iter().any(|(e, _, _)| *e == w.el))
+    }
+
+    pub fn window_count(&self) -> usize {
+        self.strip.all_windows().count()
     }
 
     /// Puts every window back where the strip says it belongs, even ones Reel thinks it

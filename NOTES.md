@@ -287,3 +287,15 @@ Files: `Strip.swift` (pure model), `StripController.swift` (one display), `Desk.
   windows while locked). Sizes an app chooses itself (Terminal's row-snapped heights) are
   accepted instead of re-corrected after every move.
 - "Animate window moves" switch (off = instant moves); reopening Reel shows its panel.
+
+## Unplug while locked left windows piled up (Nov 22)
+- After unplugging a display while locked, the one rescan on unlock found 0 windows (apps list
+  none to Accessibility yet, or are backed off as busy), so the windows Reel had just brought
+  on screen stayed in their diagonal pile. Windows reappearing fire no "created" event.
+- Now a real display change remembers how many windows the strips held. If the rescan finds
+  fewer, it scans again at 1, 2, 4, 8 s (waiting while locked) and rebuilds from a copy of the
+  saved layout only when a scan finds more than the strips hold. A second change mid-retry
+  keeps the higher count; saving skips strips that are still short. Log: `display change:
+  found N of M windows`.
+- Known limit: windows from the unplugged display aren't in the remaining display's saved
+  layout, so they're appended in their current left-to-right order (as on any unplug).
